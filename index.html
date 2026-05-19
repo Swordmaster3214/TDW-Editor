@@ -303,12 +303,45 @@
     .seq-slot.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
 
     .seq-sound  { border-color: #3a4a7a; }
+    .seq-sound-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
     .seq-chord  { border-color: var(--chord); }
     .seq-rest   { border-color: var(--rest); color: var(--rest); font-family: var(--font-mono); font-size: 18px; padding: 2px 8px; }
     .seq-control{ border-color: var(--control); color: var(--control); font-family: var(--font-mono); font-size: 11px; }
 
+    /* Divider stretches to fill the whole flex row, forcing a line break after it */
+    .seq-divider {
+      width: 100%;
+      border-color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 8px;
+    }
+
+    /* The line that runs across the divider */
+
+    .seq-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
     .seq-icon   { width: 28px; height: 28px; object-fit: contain; display: block; }
-    .seq-pitch  { font-family: var(--font-mono); font-size: 9px; color: var(--accent2); position: absolute; top: 1px; right: 3px; }
+    .seq-pitch  {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      color: var(--accent2);
+      position: absolute;
+      top: 1px;
+      right: 3px;
+      z-index: 1;
+    }
     .seq-dur    { font-family: var(--font-mono); font-size: 8px; color: var(--muted); position: absolute; bottom: 1px; right: 3px; }
 
     /* Cursor -- the blinking bar between slots */

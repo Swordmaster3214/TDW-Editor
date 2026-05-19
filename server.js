@@ -36,7 +36,7 @@ const server = http.createServer((req, res) => {
     }
 
     // Serve static files from the project root
-    let filePath = path.join(ROOT, url.pathname === '/' ? '/test.html' : url.pathname)
+    let filePath = path.join(ROOT, url.pathname)
 
     // Prevent directory traversal
     if (!filePath.startsWith(ROOT)) {

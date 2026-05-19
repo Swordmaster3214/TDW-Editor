@@ -48,12 +48,6 @@ export function render(container) {
                 container.focus()
             })
 
-            // Scroll wheel adjusts pitch on the first sound of a slot
-            el.addEventListener('wheel', e => {
-                e.preventDefault()
-                App.adjustPitch(i, 0, e.deltaY < 0 ? 1 : -1)
-            }, { passive: false })
-
             container.appendChild(el)
 
             // Cursor sits AFTER slot i (before slot i+1)
@@ -73,9 +67,44 @@ function makeSlotEl(slot, index, selection) {
     const isSelected = selection && index >= selection.start && index <= selection.end
 
     if (slot.isControl) {
-        el.className = 'seq-slot seq-control' + (isSelected ? ' selected' : '')
+        const isDivider = slot.name === 'divider'
+        el.className = 'seq-slot seq-control'
+        + (isDivider  ? ' seq-divider' : '')
+        + (isSelected ? ' selected'    : '')
         el.title = slot.toTDWToken()
-        el.textContent = slot.toTDWToken()
+
+        if (isDivider) {
+            // The divider is full-width so it breaks the flex row into a new line.
+            const img = document.createElement('img')
+            img.src = 'https://thirtydollar.website/assets/action_divider.png'
+            img.alt = 'divider'
+            img.className = 'seq-icon'
+            img.onerror = () => { img.remove() }
+            el.appendChild(img)
+            return el
+        }
+
+        const img = document.createElement('img')
+        img.src = `https://thirtydollar.website/assets/action_${slot.name}.png`
+        img.alt = slot.name
+        img.className = 'seq-icon'
+        // Fall back to the token text if the icon URL 404s
+        img.onerror = () => {
+            img.remove()
+            el.textContent = slot.toTDWToken()
+        }
+        el.appendChild(img)
+
+        // Show the value portion (everything after !name) as a small badge
+        const token = slot.toTDWToken()
+        const valuePart = token.slice(slot.name.length + 1) // strip leading "!name"
+        if (valuePart) {
+            const badge = document.createElement('sub')
+            badge.className = 'seq-dur'
+            badge.textContent = valuePart
+            el.appendChild(badge)
+        }
+
         return el
     }
 
@@ -89,25 +118,38 @@ function makeSlotEl(slot, index, selection) {
     el.className = 'seq-slot seq-sound' + (slot.sounds.length > 1 ? ' seq-chord' : '') + (isSelected ? ' selected' : '')
     el.title = slot.sounds.map(s => s.id + (s.pitch ? ` (${s.pitch > 0 ? '+' : ''}${s.pitch})` : '')).join(' + ')
 
+    // Each sound gets its own wrapper so it can carry its own pitch badge
+    // and respond to scroll-wheel pitch adjustment independently.
     slot.sounds.forEach((sound, si) => {
         const soundInfo = App.state.soundList.find(x => x.id === sound.id)
-        const img = document.createElement('img')
-        img.src = soundInfo?.imageLink ?? `https://thirtydollar.website/icons/${sound.id}.png`
-        img.alt = soundInfo?.name ?? sound.id
-        img.className = 'seq-icon'
-        // Stack chord icons with a slight offset
-        if (si > 0) img.style.marginLeft = '-10px'
-            el.appendChild(img)
-    })
 
-    // Pitch badge -- only shown if non-zero
-    const mainPitch = slot.sounds[0].pitch
-    if (mainPitch !== 0) {
-        const badge = document.createElement('sup')
-        badge.className = 'seq-pitch'
-        badge.textContent = (mainPitch > 0 ? '+' : '') + mainPitch
-        el.appendChild(badge)
-    }
+        const wrap = document.createElement('span')
+        wrap.className = 'seq-sound-wrap'
+        if (si > 0) wrap.style.marginLeft = '-10px'
+
+            const img = document.createElement('img')
+            img.src = soundInfo?.imageLink ?? `https://thirtydollar.website/icons/${sound.id}.png`
+            img.alt = soundInfo?.name ?? sound.id
+            img.className = 'seq-icon'
+            wrap.appendChild(img)
+
+            if (sound.pitch !== 0) {
+                const badge = document.createElement('sup')
+                badge.className = 'seq-pitch'
+                badge.textContent = (sound.pitch > 0 ? '+' : '') + sound.pitch
+                wrap.appendChild(badge)
+            }
+
+            // Scroll wheel on this icon adjusts only this sound's pitch.
+            // stopPropagation keeps the event from bubbling to the slot or window.
+            wrap.addEventListener('wheel', e => {
+                e.preventDefault()
+                e.stopPropagation()
+                App.adjustPitch(index, si, e.deltaY < 0 ? 1 : -1)
+            }, { passive: false })
+
+            el.appendChild(wrap)
+    })
 
     // Duration indicator for anything shorter than a quarter note
     if (slot.duration.denominator > 1 || slot.duration.numerator < 1) {
@@ -146,9 +188,11 @@ function onKeyDown(e) {
     if (ctrl && e.key === 'c') { e.preventDefault(); App.copySelection(); return }
     if (ctrl && e.key === 'v') { e.preventDefault(); App.pasteAtCursor(); return }
 
-    // Pitch nudge on the slot before the cursor
+    // Arrow up/down nudges pitch on the first sound of the slot before the cursor.
+    // For chords, scroll over the individual icon to adjust other sounds.
     if (e.key === 'ArrowUp')   { e.preventDefault(); App.adjustPitch(App.state.cursorPos - 1, 0, +1); return }
     if (e.key === 'ArrowDown') { e.preventDefault(); App.adjustPitch(App.state.cursorPos - 1, 0, -1); return }
+
     // Action shortcuts (single letter, no modifier keys held) -- only when
     // no input/select/textarea is focused so they don't eat typing elsewhere
     if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {

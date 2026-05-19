@@ -46,9 +46,21 @@ function render(container) {
 function buildSoundList(sounds, listEl) {
     const groups = {}
     for (const s of sounds) {
-        const g = s.group || 'Other'
-        if (!groups[g]) groups[g] = []
-            groups[g].push(s)
+        if (s.group) {
+            // Sound has an explicit group -- use it as-is
+            if (!groups[s.group]) groups[s.group] = []
+                groups[s.group].push(s)
+        } else if (s.tags && s.tags.length) {
+            // No group: slot the sound into each of its tag categories
+            for (const tag of s.tags) {
+                const g = tag.charAt(0).toUpperCase() + tag.slice(1)
+                if (!groups[g]) groups[g] = []
+                    groups[g].push(s)
+            }
+        } else {
+            if (!groups['Other']) groups['Other'] = []
+                groups['Other'].push(s)
+        }
     }
 
     for (const [groupName, items] of Object.entries(groups)) {
