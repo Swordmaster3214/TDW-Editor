@@ -218,6 +218,10 @@ export async function loadSounds() {
         const res  = await fetch('/sounds.json')
         const list = await res.json()
         list.forEach(s => {
+            // The TDW token for a sound is its emoji if it has one, otherwise its id.
+            // This is what gets written into exported sequences and stored on Sound objects.
+            s.tdwId = s.emoji || s.id
+
             // Reproduce TDW's image URL logic exactly
             s.imageLink = (!s.emoji && s.id.match(/[a-z0-9]/i))
             ? `https://thirtydollar.website/icons/${s.img || s.id}.png`

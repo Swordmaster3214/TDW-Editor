@@ -89,6 +89,25 @@
     button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
     button.primary:hover { filter: brightness(1.15); }
 
+    /* Play button states */
+    #btnPlay {
+      min-width: 90px;
+      font-weight: 600;
+      transition: background .15s, border-color .15s;
+    }
+    #btnPlay.playing {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: #fff;
+    }
+    #btnPlay.loading {
+      background: var(--accent2);
+      border-color: var(--accent2);
+      color: #000;
+      cursor: wait;
+    }
+    #btnPlay.playing:hover { filter: brightness(1.15); }
+
     /* Duration picker buttons */
     #durPicker { display: flex; gap: 3px; }
     .dur-btn {
@@ -250,7 +269,6 @@
       overflow: hidden;
     }
 
-    /* Measure ruler -- shows beat positions above the sequence */
     #ruler {
       height: 20px;
       flex-shrink: 0;
@@ -266,7 +284,6 @@
       overflow: hidden;
     }
 
-    /* The sequence itself */
     #seq-wrap {
       flex: 1;
       overflow-y: auto;
@@ -313,7 +330,6 @@
     .seq-rest   { border-color: var(--rest); color: var(--rest); font-family: var(--font-mono); font-size: 18px; padding: 2px 8px; }
     .seq-control{ border-color: var(--control); color: var(--control); font-family: var(--font-mono); font-size: 11px; }
 
-    /* Divider stretches to fill the whole flex row, forcing a line break after it */
     .seq-divider {
       width: 100%;
       border-color: var(--muted);
@@ -322,8 +338,6 @@
       gap: 8px;
       padding: 4px 8px;
     }
-
-    /* The line that runs across the divider */
 
     .seq-divider::after {
       content: '';
@@ -344,7 +358,6 @@
     }
     .seq-dur    { font-family: var(--font-mono); font-size: 8px; color: var(--muted); position: absolute; bottom: 1px; right: 3px; }
 
-    /* Cursor -- the blinking bar between slots */
     .seq-cursor {
       display: inline-block;
       width: 2px;
@@ -377,6 +390,14 @@
       flex-shrink: 0;
     }
     #statusbar span b { color: var(--text); }
+
+    /* Playing indicator in status bar */
+    #sbPlaying {
+      color: var(--success);
+      display: none;
+    }
+    #sbPlaying.active { display: inline; }
+    #sbPlaying::before { content: '● '; }
   </style>
 </head>
 <body>
@@ -423,7 +444,8 @@
     <button id="btnImportTDW">Import .🗿</button>
     <button id="btnSave">Save .tde</button>
     <button id="btnExport">Export .🗿</button>
-    <button class="primary" id="btnOpenTDW">▶ Open in TDW</button>
+    <button id="btnOpenTDW">Open in TDW</button>
+    <button class="primary" id="btnPlay">▶ Play</button>
   </div>
 
   <!-- Hidden file inputs -->
@@ -446,7 +468,7 @@
 
   <!-- Editor area -->
   <div id="editor-area">
-    <div id="ruler">Click a sound to insert · Space = rest · Backspace = delete · Shift+arrows = select · Ctrl+C/V = copy/paste · Scroll = pitch · ↑↓ = pitch</div>
+    <div id="ruler">Click a sound to insert · Space = rest · Backspace = delete · Shift+arrows = select · Ctrl+C/V = copy/paste · Scroll = pitch · ↑↓ = pitch · Right-click = preview</div>
     <div id="seq-wrap">
       <div id="seq"></div>
     </div>
@@ -460,15 +482,17 @@
   <span>Cursor: <b id="sbCursor">0</b></span>
   <span>BPM: <b id="sbBPM">120</b></span>
   <span id="sbSelection" style="display:none">Selection: <b id="sbSelRange"></b></span>
-  <span id="sbUndo" style="display:none; color: var(--accent)">Unsaved changes</span>
+  <span id="sbUndo"    style="display:none; color: var(--accent)">Unsaved changes</span>
+  <span id="sbPlaying">Playing</span>
 </div>
 
 <script type="module">
-  import * as App     from './app.js'
-  import * as Editor  from './ui/editor.js'
-  import * as Picker  from './ui/soundpicker.js'
-  import * as Actions from './ui/actions.js'
-  import { Fraction } from './model/fraction.js'
+  import * as App      from './app.js'
+  import * as Editor   from './ui/editor.js'
+  import * as Picker   from './ui/soundpicker.js'
+  import * as Actions  from './ui/actions.js'
+  import * as Seq      from './audio/sequencer.js'
+  import { Fraction }  from './model/fraction.js'
 
   // Boot
   App.loadSounds()
@@ -476,7 +500,7 @@
   Picker.init(document.getElementById('picker'))
   Actions.init(document.getElementById('actions-panel'))
 
-  // Tab switching
+  // -- Tab switching --
   document.getElementById('sidebar-tabs').addEventListener('click', e => {
     const btn = e.target.closest('.tab-btn')
     if (!btn) return
@@ -488,12 +512,10 @@
 
   // -- Toolbar wiring --
 
-  // BPM
   const bpmInput = document.getElementById('bpmInput')
   bpmInput.addEventListener('change', () => App.setBPM(+bpmInput.value))
   bpmInput.addEventListener('input',  () => App.setBPM(+bpmInput.value))
 
-  // Time signature
   document.getElementById('timeSigNum').addEventListener('change', updateTimeSig)
   document.getElementById('timeSigDen').addEventListener('change', updateTimeSig)
   function updateTimeSig() {
@@ -503,7 +525,6 @@
     )
   }
 
-  // Duration picker
   document.getElementById('durPicker').addEventListener('click', e => {
     const btn = e.target.closest('.dur-btn')
     if (!btn) return
@@ -512,7 +533,6 @@
     App.setActiveDuration(new Fraction(+btn.dataset.n, +btn.dataset.d))
   })
 
-  // File operations
   document.getElementById('btnNew').addEventListener('click', () => {
     if (App.state.project.slots.length && !confirm('Start a new project? Unsaved changes will be lost.')) return
     App.newProject()
@@ -534,6 +554,59 @@
     e.target.value = ''
   })
 
+  // -- Play / Stop --
+
+  const btnPlay = document.getElementById('btnPlay')
+
+  btnPlay.addEventListener('click', async () => {
+    if (Seq.isActive()) {
+      Seq.stop()
+      setPlayUI(false)
+      return
+    }
+
+    if (!App.state.project.slots.length) return
+
+    setPlayUI('loading')
+    try {
+      await Seq.play(App.state.project, {
+        onStop: () => setPlayUI(false),
+      })
+      setPlayUI('playing')
+    } catch (e) {
+      console.error('[play] Failed:', e)
+      setPlayUI(false)
+    }
+  })
+
+  function setPlayUI(state) {
+    const playing = document.getElementById('sbPlaying')
+    if (state === 'loading') {
+      btnPlay.textContent = '… Loading'
+      btnPlay.className = 'loading'
+      btnPlay.disabled = true
+      playing.classList.remove('active')
+    } else if (state === 'playing') {
+      btnPlay.textContent = '⏹ Stop'
+      btnPlay.className = 'playing'
+      btnPlay.disabled = false
+      playing.classList.add('active')
+    } else {
+      btnPlay.textContent = '▶ Play'
+      btnPlay.className = 'primary'
+      btnPlay.disabled = false
+      playing.classList.remove('active')
+    }
+  }
+
+  // Stop playback if the project changes while playing
+  document.addEventListener('statechange', () => {
+    if (Seq.isActive()) {
+      Seq.stop()
+      setPlayUI(false)
+    }
+  })
+
   // -- Status bar updates --
   document.addEventListener('statechange', () => {
     const { project, cursorPos, selection, undoStack } = App.state
@@ -541,7 +614,6 @@
     document.getElementById('sbCursor').textContent = cursorPos
     document.getElementById('sbBPM').textContent    = project.bpm
 
-    // Keep toolbar inputs in sync (e.g. after loading a project)
     bpmInput.value = project.bpm
     document.getElementById('timeSigNum').value = project.timeSignature.numerator
     document.getElementById('timeSigDen').value = project.timeSignature.denominator

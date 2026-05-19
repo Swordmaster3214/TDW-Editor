@@ -4,12 +4,14 @@
 import * as App from '../app.js'
 import { ACTION_BY_KEY } from '../model/controlslot.js'
 import { handleActionClick } from './actions.js'
+import { previewSound } from '../audio/engine.js'
 
 export function init(container) {
     container.setAttribute('tabindex', '0')
-    container.addEventListener('keydown', onKeyDown)
-    container.addEventListener('click',   onContainerClick)
-    document.addEventListener('statechange', () => render(container))
+    container.addEventListener('keydown',     onKeyDown)
+    container.addEventListener('click',       onContainerClick)
+    container.addEventListener('contextmenu', onContainerContextMenu)
+    document.addEventListener('statechange',  () => render(container))
     render(container)
 }
 
@@ -22,7 +24,6 @@ export function render(container) {
     container.innerHTML = ''
 
     if (slots.length === 0) {
-        // Show cursor alone in an empty sequence
         container.appendChild(makeCursorEl())
         const hint = document.createElement('span')
         hint.className = 'seq-hint'
@@ -31,7 +32,6 @@ export function render(container) {
         return
     }
 
-    // Cursor before slot 0
     if (cursorPos === 0) container.appendChild(makeCursorEl())
 
         slots.forEach((slot, i) => {
@@ -48,9 +48,20 @@ export function render(container) {
                 container.focus()
             })
 
+            // Right-click on a sound slot previews it; control slots are ignored
+            el.addEventListener('contextmenu', e => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (!slot.isControl && !slot.isRest && slot.sounds.length) {
+                    // Play the first sound (or all sounds in a chord)
+                    for (const sound of slot.sounds) {
+                        previewSound(sound.id, { pitch: sound.pitch })
+                    }
+                }
+            })
+
             container.appendChild(el)
 
-            // Cursor sits AFTER slot i (before slot i+1)
             if (cursorPos === i + 1) container.appendChild(makeCursorEl())
         })
 }
@@ -74,7 +85,6 @@ function makeSlotEl(slot, index, selection) {
         el.title = slot.toTDWToken()
 
         if (isDivider) {
-            // The divider is full-width so it breaks the flex row into a new line.
             const img = document.createElement('img')
             img.src = 'https://thirtydollar.website/assets/action_divider.png'
             img.alt = 'divider'
@@ -88,16 +98,14 @@ function makeSlotEl(slot, index, selection) {
         img.src = `https://thirtydollar.website/assets/action_${slot.name}.png`
         img.alt = slot.name
         img.className = 'seq-icon'
-        // Fall back to the token text if the icon URL 404s
         img.onerror = () => {
             img.remove()
             el.textContent = slot.toTDWToken()
         }
         el.appendChild(img)
 
-        // Show the value portion (everything after !name) as a small badge
         const token = slot.toTDWToken()
-        const valuePart = token.slice(slot.name.length + 1) // strip leading "!name"
+        const valuePart = token.slice(slot.name.length + 1)
         if (valuePart) {
             const badge = document.createElement('sub')
             badge.className = 'seq-dur'
@@ -115,11 +123,14 @@ function makeSlotEl(slot, index, selection) {
         return el
     }
 
-    el.className = 'seq-slot seq-sound' + (slot.sounds.length > 1 ? ' seq-chord' : '') + (isSelected ? ' selected' : '')
-    el.title = slot.sounds.map(s => s.id + (s.pitch ? ` (${s.pitch > 0 ? '+' : ''}${s.pitch})` : '')).join(' + ')
+    el.className = 'seq-slot seq-sound'
+    + (slot.sounds.length > 1 ? ' seq-chord' : '')
+    + (isSelected ? ' selected' : '')
+    el.title = slot.sounds
+    .map(s => s.id + (s.pitch ? ` (${s.pitch > 0 ? '+' : ''}${s.pitch})` : ''))
+    .join(' + ')
+    + '\nRight-click to preview'
 
-    // Each sound gets its own wrapper so it can carry its own pitch badge
-    // and respond to scroll-wheel pitch adjustment independently.
     slot.sounds.forEach((sound, si) => {
         const soundInfo = App.state.soundList.find(x => x.id === sound.id)
 
@@ -140,18 +151,20 @@ function makeSlotEl(slot, index, selection) {
                 wrap.appendChild(badge)
             }
 
-            // Scroll wheel on this icon adjusts only this sound's pitch.
-            // stopPropagation keeps the event from bubbling to the slot or window.
+            // Scroll wheel adjusts pitch and plays a quick preview of the result
             wrap.addEventListener('wheel', e => {
                 e.preventDefault()
                 e.stopPropagation()
-                App.adjustPitch(index, si, e.deltaY < 0 ? 1 : -1)
+                const delta = e.deltaY < 0 ? 1 : -1
+                App.adjustPitch(index, si, delta)
+                // Preview uses the new pitch (adjustPitch clamps to [-24, 24])
+                const newPitch = Math.max(-24, Math.min(24, (sound.pitch || 0) + delta))
+                previewSound(sound.id, { pitch: newPitch })
             }, { passive: false })
 
             el.appendChild(wrap)
     })
 
-    // Duration indicator for anything shorter than a quarter note
     if (slot.duration.denominator > 1 || slot.duration.numerator < 1) {
         const dur = document.createElement('sub')
         dur.className = 'seq-dur'
@@ -188,13 +201,22 @@ function onKeyDown(e) {
     if (ctrl && e.key === 'c') { e.preventDefault(); App.copySelection(); return }
     if (ctrl && e.key === 'v') { e.preventDefault(); App.pasteAtCursor(); return }
 
-    // Arrow up/down nudges pitch on the first sound of the slot before the cursor.
-    // For chords, scroll over the individual icon to adjust other sounds.
-    if (e.key === 'ArrowUp')   { e.preventDefault(); App.adjustPitch(App.state.cursorPos - 1, 0, +1); return }
-    if (e.key === 'ArrowDown') { e.preventDefault(); App.adjustPitch(App.state.cursorPos - 1, 0, -1); return }
+    // Arrow up/down nudges pitch and previews the result
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        const delta = e.key === 'ArrowUp' ? 1 : -1
+        const slotIdx = App.state.cursorPos - 1
+        App.adjustPitch(slotIdx, 0, delta)
+        // Preview with updated pitch if the slot has a sound
+        const slot = App.state.project.slots[slotIdx]
+        if (slot && !slot.isRest && !slot.isControl && slot.sounds[0]) {
+            const s = slot.sounds[0]
+            previewSound(s.id, { pitch: s.pitch })
+        }
+        return
+    }
 
-    // Action shortcuts (single letter, no modifier keys held) -- only when
-    // no input/select/textarea is focused so they don't eat typing elsewhere
+    // Action shortcuts (single letter, no modifier keys, editor focused)
     if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
         const action = ACTION_BY_KEY[e.key.toLowerCase()]
         if (action) {
@@ -202,6 +224,11 @@ function onKeyDown(e) {
             handleActionClick(action, document.querySelector(`.action-btn[data-name="${action.name}"]`))
         }
     }
+}
+
+// Suppress the browser context menu on the container background
+function onContainerContextMenu(e) {
+    e.preventDefault()
 }
 
 // Clicking the container background moves cursor to end

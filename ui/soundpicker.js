@@ -1,12 +1,12 @@
 // Sound picker sidebar. Groups sounds by TDW's group field and supports
 // searching by name, ID, tags (e.g. "percussion"), and source (e.g. "Rhythm Heaven").
-// Click = insert at cursor. Ctrl+click = add to chord on the slot before cursor.
+// Click = insert at cursor. Ctrl+click = add to chord. Right-click = preview.
 
 import * as App from '../app.js'
+import { previewSound } from '../audio/engine.js'
 
 export function init(container) {
     document.addEventListener('statechange', () => {
-        // Only build once -- after sounds have loaded
         if (!App.state.soundList.length || container.dataset.loaded === 'true') return
             container.dataset.loaded = 'true'
             render(container)
@@ -16,7 +16,6 @@ export function init(container) {
 function render(container) {
     container.innerHTML = ''
 
-    // Search box with legend
     const searchWrap = document.createElement('div')
     searchWrap.className = 'picker-search-wrap'
 
@@ -27,19 +26,17 @@ function render(container) {
 
     const hint = document.createElement('div')
     hint.className   = 'picker-search-hint'
-    hint.textContent = 'Ctrl+click to add to chord'
+    hint.textContent = 'Ctrl+click to add to chord · Right-click to preview'
 
     searchWrap.appendChild(search)
     searchWrap.appendChild(hint)
     container.appendChild(searchWrap)
 
-    // Sound list
     const listEl = document.createElement('div')
     listEl.className = 'picker-list'
     buildSoundList(App.state.soundList, listEl)
     container.appendChild(listEl)
 
-    // Wire up search after list is built
     search.addEventListener('input', () => filterSounds(search.value.trim().toLowerCase(), listEl))
 }
 
@@ -47,11 +44,9 @@ function buildSoundList(sounds, listEl) {
     const groups = {}
     for (const s of sounds) {
         if (s.group) {
-            // Sound has an explicit group -- use it as-is
             if (!groups[s.group]) groups[s.group] = []
                 groups[s.group].push(s)
         } else if (s.tags && s.tags.length) {
-            // No group: slot the sound into each of its tag categories
             for (const tag of s.tags) {
                 const g = tag.charAt(0).toUpperCase() + tag.slice(1)
                 if (!groups[g]) groups[g] = []
@@ -79,19 +74,17 @@ function makeSoundEl(sound) {
     const el = document.createElement('button')
     el.className = 'picker-sound'
 
-    // Store all searchable fields as data attributes
     el.dataset.id     = sound.id
     el.dataset.name   = (sound.name   || sound.id).toLowerCase()
     el.dataset.tags   = (sound.tags   || []).join(' ').toLowerCase()
     el.dataset.source = (sound.source || '').toLowerCase()
 
-    // Tooltip shows full details
     const tagStr = (sound.tags || []).join(', ')
     el.title = [
         sound.name,
         sound.source ? `Source: ${sound.source}` : '',
         tagStr       ? `Tags: ${tagStr}` : '',
-        `Ctrl+click to add to chord`,
+        'Right-click to preview · Ctrl+click to add to chord',
     ].filter(Boolean).join('\n')
 
     const img = document.createElement('img')
@@ -122,8 +115,15 @@ function makeSoundEl(sound) {
                 App.addToChord(sound.id)
             } else {
                 App.insertSound(sound.id)
+                // Play a quick preview so you hear what you just inserted
+                previewSound(sound.id)
             }
             document.getElementById('seq').focus()
+        })
+
+        el.addEventListener('contextmenu', e => {
+            e.preventDefault()
+            previewSound(sound.id)
         })
 
         return el
@@ -131,7 +131,6 @@ function makeSoundEl(sound) {
 
 function filterSounds(query, listEl) {
     if (!query) {
-        // Show everything
         listEl.querySelectorAll('.picker-sound, .picker-group-header')
         .forEach(el => el.style.display = '')
         return
@@ -146,7 +145,6 @@ function filterSounds(query, listEl) {
             currentHeader = el
             groupVisible.set(el, false)
         } else if (el.classList.contains('picker-sound')) {
-            // All terms must match at least one field (AND across terms, OR across fields)
             const matches = terms.every(term =>
             el.dataset.name.includes(term)   ||
             el.dataset.tags.includes(term)   ||
@@ -158,7 +156,6 @@ function filterSounds(query, listEl) {
         }
     }
 
-    // Hide group headers with no visible sounds
     for (const [header, visible] of groupVisible) {
         header.style.display = visible ? '' : 'none'
     }
