@@ -53,7 +53,6 @@ export function render(container) {
                 e.preventDefault()
                 e.stopPropagation()
                 if (!slot.isControl && !slot.isRest && slot.sounds.length) {
-                    // Play the first sound (or all sounds in a chord)
                     for (const sound of slot.sounds) {
                         previewSound(sound.id, { pitch: sound.pitch })
                     }
@@ -132,7 +131,11 @@ function makeSlotEl(slot, index, selection) {
     + '\nRight-click to preview'
 
     slot.sounds.forEach((sound, si) => {
-        const soundInfo = App.state.soundList.find(x => x.id === sound.id)
+        // Sound ids may be emoji (from TDW import or picker insert) or plain ids.
+        // Check both tdwId and id when looking up metadata so either form works.
+        const soundInfo = App.state.soundList.find(
+            x => x.tdwId === sound.id || x.id === sound.id
+        )
 
         const wrap = document.createElement('span')
         wrap.className = 'seq-sound-wrap'
@@ -157,7 +160,6 @@ function makeSlotEl(slot, index, selection) {
                 e.stopPropagation()
                 const delta = e.deltaY < 0 ? 1 : -1
                 App.adjustPitch(index, si, delta)
-                // Preview uses the new pitch (adjustPitch clamps to [-24, 24])
                 const newPitch = Math.max(-24, Math.min(24, (sound.pitch || 0) + delta))
                 previewSound(sound.id, { pitch: newPitch })
             }, { passive: false })
@@ -207,7 +209,6 @@ function onKeyDown(e) {
         const delta = e.key === 'ArrowUp' ? 1 : -1
         const slotIdx = App.state.cursorPos - 1
         App.adjustPitch(slotIdx, 0, delta)
-        // Preview with updated pitch if the slot has a sound
         const slot = App.state.project.slots[slotIdx]
         if (slot && !slot.isRest && !slot.isControl && slot.sounds[0]) {
             const s = slot.sounds[0]

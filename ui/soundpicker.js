@@ -74,6 +74,8 @@ function makeSoundEl(sound) {
     const el = document.createElement('button')
     el.className = 'picker-sound'
 
+    // Dataset uses the plain id for searching, but we insert using tdwId
+    // (emoji takes priority -- that's what TDW sequences actually use)
     el.dataset.id     = sound.id
     el.dataset.name   = (sound.name   || sound.id).toLowerCase()
     el.dataset.tags   = (sound.tags   || []).join(' ').toLowerCase()
@@ -111,11 +113,12 @@ function makeSoundEl(sound) {
         el.appendChild(info)
 
         el.addEventListener('click', e => {
+            // Use tdwId so the stored Sound id matches what TDW expects on export --
+            // emoji for sounds that have one, plain id otherwise
             if (e.ctrlKey || e.metaKey) {
-                App.addToChord(sound.id)
+                App.addToChord(sound.tdwId)
             } else {
-                App.insertSound(sound.id)
-                // Play a quick preview so you hear what you just inserted
+                App.insertSound(sound.tdwId)
                 previewSound(sound.id)
             }
             document.getElementById('seq').focus()
