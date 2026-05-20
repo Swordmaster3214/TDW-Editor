@@ -17,6 +17,7 @@ import {
     getCurrentTime,
     resumeContext,
 } from './engine.js'
+import { resolveAudioId } from '../app.js'
 
 const QUEUE_AHEAD_SECS = 5
 const MAX_SCHEDULE_SECS = 60 * 10   // 10 minute safety limit for runaway loops
@@ -169,14 +170,17 @@ export function buildSchedule(project) {
 
         // -- Sound slots (possibly a chord) --
         for (const sound of slot.sounds) {
-            soundIds.add(sound.id)
+            // sound.id is the tdwId (may be emoji) -- resolve to the plain id
+            // that the audio engine uses to build the wav file URL
+            const audioId = resolveAudioId(sound.id)
+            soundIds.add(audioId)
 
             // Per-sound volume override (null = inherit 100)
             const perVol = sound.volume ?? 100
 
             events.push({
                 type:   'sound',
-                id:     sound.id,
+                id:     audioId,
                 time:   timer,
                 pitch:  clamp((sound.pitch || 0) + transposition, -72, 72),
                         // Match TDW: global volume * (per-sound vol / 100), /200 in engine

@@ -213,6 +213,13 @@ export function setActiveDuration(fraction) {
 
 // -- Sound list --
 
+// Resolve a tdwId (may be emoji) back to the plain id used for audio filenames.
+// Falls back to the input unchanged so plain ids still work with no lookup cost.
+export function resolveAudioId(tdwId) {
+    const found = state.soundList.find(s => s.tdwId === tdwId || s.id === tdwId)
+    return found ? found.id : tdwId
+}
+
 export async function loadSounds() {
     try {
         const res  = await fetch('/sounds.json')

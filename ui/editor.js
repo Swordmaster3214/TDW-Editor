@@ -2,6 +2,7 @@
 // between them, supports click-to-place, keyboard navigation, and selection.
 
 import * as App from '../app.js'
+import { resolveAudioId } from '../app.js'
 import { ACTION_BY_KEY } from '../model/controlslot.js'
 import { handleActionClick } from './actions.js'
 import { previewSound } from '../audio/engine.js'
@@ -54,7 +55,7 @@ export function render(container) {
                 e.stopPropagation()
                 if (!slot.isControl && !slot.isRest && slot.sounds.length) {
                     for (const sound of slot.sounds) {
-                        previewSound(sound.id, { pitch: sound.pitch })
+                        previewSound(resolveAudioId(sound.id), { pitch: sound.pitch })
                     }
                 }
             })
@@ -160,8 +161,7 @@ function makeSlotEl(slot, index, selection) {
                 e.stopPropagation()
                 const delta = e.deltaY < 0 ? 1 : -1
                 App.adjustPitch(index, si, delta)
-                const newPitch = Math.max(-24, Math.min(24, (sound.pitch || 0) + delta))
-                previewSound(sound.id, { pitch: newPitch })
+                previewSound(sound.id, { pitch: sound.pitch })
             }, { passive: false })
 
             el.appendChild(wrap)
@@ -212,7 +212,7 @@ function onKeyDown(e) {
         const slot = App.state.project.slots[slotIdx]
         if (slot && !slot.isRest && !slot.isControl && slot.sounds[0]) {
             const s = slot.sounds[0]
-            previewSound(s.id, { pitch: s.pitch })
+            previewSound(resolveAudioId(s.id), { pitch: s.pitch })
         }
         return
     }
