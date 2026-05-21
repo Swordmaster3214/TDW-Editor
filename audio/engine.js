@@ -103,7 +103,7 @@ export function previewSound(id, { pitch = 0, volume = 100, pan = 0 } = {}) {
 // This is what !cut uses -- it shouldn't silence notes queued for later.
 export function cutBefore(audioContextTime) {
     for (const [src, startedAt] of activeSources) {
-        if (startedAt <= audioContextTime + 0.005) {
+        if (startedAt < audioContextTime) {
             try { src.stop() } catch { /* already ended */ }
             activeSources.delete(src)
         }

@@ -41,6 +41,42 @@ function applyModifier(current, newVal, modifier) {
     }
 }
 
+// Helper to untrigger all one-shot actions (loops, remaining state)
+// after a given index. Used when looping back.
+function untriggerAfter(index, slots, triggered, remaining) {
+    for (const k of triggered) {
+        if (k > index && slots[k].isControl && slots[k].name === 'loop') {
+            triggered.delete(k)
+        }
+    }
+    for (const k of remaining) {
+        if (k > index) remaining.delete(k)
+    }
+}
+
+// Helper to untrigger jump triggers within the loop body (between loopTarget and current index).
+// This allows jumps to fire again on the next loop iteration.
+function resetJumpsInLoop(loopTarget, currentIndex, slots, triggered) {
+    for (const k of triggered) {
+        if (k > loopTarget && k < currentIndex && slots[k].isControl && slots[k].name === 'jump') {
+            triggered.delete(k)
+        }
+    }
+}
+
+// Helper to untrigger only loop-related state after a jump target,
+// preserving jump triggers so they don't fire again.
+function untriggerLoopsAfter(index, slots, triggered, remaining) {
+    for (const k of triggered) {
+        if (k > index && slots[k].isControl && slots[k].name === 'loop') {
+            triggered.delete(k)
+        }
+    }
+    for (const k of remaining) {
+        if (k > index) remaining.delete(k)
+    }
+}
+
 // Walk the slot list and produce a flat list of timed events, similar to
 // TDW's preloadSequence(). Returns { events, soundIds }.
 //
@@ -60,12 +96,7 @@ export function buildSchedule(project) {
 
     // Loop/jump state -- avoids mutating project slots
     const remaining = new Map()   // slotIndex -> beats/loops left
-    const triggered = new Set()   // slotIndices that have fired their one-shot (loop/looponce)
-
-    // jump slots are tracked separately and NEVER cleared by loop resets.
-    // Without this, looping back past a jump slot re-enables it, causing
-    // infinite loops even when the sequence is only supposed to jump once.
-    const jumpFired = new Set()
+    const triggered = new Set()   // slotIndices that have fired their one-shot (loop/jump)
 
     let index = 0
 
@@ -114,10 +145,10 @@ export function buildSchedule(project) {
                     const left = remaining.has(index) ? remaining.get(index) : val
                     if (left > 0) {
                         remaining.set(index, left - 1)
-                        // Clear one-shot loop triggers after the new target position
-                        for (const k of triggered) {
-                            if (k > loopTarget) triggered.delete(k)
-                        }
+                        // Reset jumps within the loop body
+                        resetJumpsInLoop(loopTarget, index, slots, triggered)
+                        // Untrigger loops after the loop target
+                        untriggerAfter(loopTarget, slots, triggered, remaining)
                         index = loopTarget - 1
                     } else {
                         remaining.delete(index)
@@ -125,12 +156,17 @@ export function buildSchedule(project) {
                     break
                 }
                 case 'loop': {
-                    if (!triggered.has(index)) {
-                        triggered.add(index)
-                        for (const k of triggered) {
-                            if (k > loopTarget) triggered.delete(k)
-                        }
+                    // Treat loop as loopmany with 1 iteration
+                    const left = remaining.has(index) ? remaining.get(index) : 1
+                    if (left > 0) {
+                        remaining.set(index, left - 1)
+                        // Reset jumps within the loop body
+                        resetJumpsInLoop(loopTarget, index, slots, triggered)
+                        // Untrigger loops after the loop target
+                        untriggerAfter(loopTarget, slots, triggered, remaining)
                         index = loopTarget - 1
+                    } else {
+                        remaining.delete(index)
                     }
                     break
                 }
@@ -139,27 +175,34 @@ export function buildSchedule(project) {
                     break
                 }
                 case 'jump': {
-                    // jumpFired is never cleared -- each jump slot fires at most once
-                    // regardless of how many times the sequence loops past it.
-                    if (!jumpFired.has(index)) {
-                        jumpFired.add(index)
+                    // Jump fires at most once per walk (not cleared by loops)
+                    if (!triggered.has(index)) {
+                        triggered.add(index)
+                        // Find a target with matching value (targets are always available)
                         const targetIdx = slots.findIndex((s, i) =>
                         s.isControl &&
                         s.name === 'target' &&
-                        s.value == val &&
-                        !triggered.has(i)
+                        s.value == val
                         )
                         if (targetIdx >= 0) {
-                            for (const k of triggered) {
-                                if (k > targetIdx) triggered.delete(k)
-                            }
+                            // Only untrigger loops after the jump target, not jumps
+                            untriggerLoopsAfter(targetIdx, slots, triggered, remaining)
                             index = targetIdx
                         }
                     }
                     break
                 }
+                case 'target': {
+                    // Just a marker, no action needed
+                    break
+                }
                 case 'cut': {
                     events.push({ type: 'cut', time: timer })
+                    break
+                }
+                case 'startpos': {
+                    // Marker for resume position. No audio effect.
+                    // (Scrubbing/divider logic handled at playback time if needed)
                     break
                 }
                 // divider, flash, pulse, bg -- no audio effect
