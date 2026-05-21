@@ -7,12 +7,32 @@ import { ACTION_BY_KEY } from '../model/controlslot.js'
 import { handleActionClick } from './actions.js'
 import { previewSound } from '../audio/engine.js'
 
+// Tracks which slot indices have played during the current playback session.
+// Updated via DOM events fired by the sequencer -- direct classList updates
+// avoid a full re-render on every note.
+const playedSlots = new Set()
+
 export function init(container) {
     container.setAttribute('tabindex', '0')
     container.addEventListener('keydown',     onKeyDown)
     container.addEventListener('click',       onContainerClick)
     container.addEventListener('contextmenu', onContainerContextMenu)
     document.addEventListener('statechange',  () => render(container))
+
+    // A slot just played -- mark it without re-rendering the whole editor
+    document.addEventListener('slotplay', e => {
+        const idx = e.detail.index
+        if (playedSlots.has(idx)) return   // already marked, skip the DOM query
+            playedSlots.add(idx)
+            container.querySelector(`[data-index="${idx}"]`)?.classList.add('played')
+    })
+
+    // Playback stopped -- clear all played markers
+    document.addEventListener('slotsclear', () => {
+        playedSlots.clear()
+        container.querySelectorAll('.played').forEach(el => el.classList.remove('played'))
+    })
+
     render(container)
 }
 
@@ -76,12 +96,14 @@ function makeCursorEl() {
 function makeSlotEl(slot, index, selection) {
     const el = document.createElement('span')
     const isSelected = selection && index >= selection.start && index <= selection.end
+    const wasPlayed  = playedSlots.has(index)
 
     if (slot.isControl) {
         const isDivider = slot.name === 'divider'
         el.className = 'seq-slot seq-control'
         + (isDivider  ? ' seq-divider' : '')
         + (isSelected ? ' selected'    : '')
+        + (wasPlayed  ? ' played'      : '')
         el.title = slot.toTDWToken()
 
         if (isDivider) {
@@ -117,7 +139,9 @@ function makeSlotEl(slot, index, selection) {
     }
 
     if (slot.isRest) {
-        el.className = 'seq-slot seq-rest' + (isSelected ? ' selected' : '')
+        el.className = 'seq-slot seq-rest'
+        + (isSelected ? ' selected' : '')
+        + (wasPlayed  ? ' played'   : '')
         el.title = `Rest (${slot.duration})`
         el.textContent = '·'
         return el
@@ -126,14 +150,13 @@ function makeSlotEl(slot, index, selection) {
     el.className = 'seq-slot seq-sound'
     + (slot.sounds.length > 1 ? ' seq-chord' : '')
     + (isSelected ? ' selected' : '')
+    + (wasPlayed  ? ' played'   : '')
     el.title = slot.sounds
     .map(s => s.id + (s.pitch ? ` (${s.pitch > 0 ? '+' : ''}${s.pitch})` : ''))
     .join(' + ')
     + '\nRight-click to preview'
 
     slot.sounds.forEach((sound, si) => {
-        // Sound ids may be emoji (from TDW import or picker insert) or plain ids.
-        // Check both tdwId and id when looking up metadata so either form works.
         const soundInfo = App.state.soundList.find(
             x => x.tdwId === sound.id || x.id === sound.id
         )
@@ -161,7 +184,7 @@ function makeSlotEl(slot, index, selection) {
                 e.stopPropagation()
                 const delta = e.deltaY < 0 ? 1 : -1
                 App.adjustPitch(index, si, delta)
-                previewSound(sound.id, { pitch: sound.pitch })
+                previewSound(resolveAudioId(sound.id), { pitch: sound.pitch })
             }, { passive: false })
 
             el.appendChild(wrap)

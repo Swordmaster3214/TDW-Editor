@@ -15,8 +15,9 @@ function getCtx() {
 // share one request instead of firing several
 const bufferCache = new Map()
 
-// All currently playing source nodes, so we can cut them all at once
-const activeSources = new Set()
+// Map of source -> scheduled AudioContext start time.
+// Storing the start time lets cutBefore() leave future-queued sounds alone.
+const activeSources = new Map()
 
 function semitonesToRate(semitones) {
     return Math.pow(2, semitones / 12)
@@ -86,7 +87,7 @@ export async function playSound(id, {
         panner.connect(ac.destination)
 
         source.start(when)
-        activeSources.add(source)
+        activeSources.set(source, when)
         source.onended = () => activeSources.delete(source)
 
         return source
@@ -98,10 +99,21 @@ export function previewSound(id, { pitch = 0, volume = 100, pan = 0 } = {}) {
     playSound(id, { pitch, volume, pan })
 }
 
-// Stop every currently playing sound immediately
+// Stop only sounds whose scheduled start is at or before `audioContextTime`.
+// This is what !cut uses -- it shouldn't silence notes queued for later.
+export function cutBefore(audioContextTime) {
+    for (const [src, startedAt] of activeSources) {
+        if (startedAt <= audioContextTime + 0.005) {
+            try { src.stop() } catch { /* already ended */ }
+            activeSources.delete(src)
+        }
+    }
+}
+
+// Stop every currently playing or queued sound immediately
 export function cutAll() {
-    for (const src of activeSources) {
-        try { src.stop() } catch { /* already stopped */ }
+    for (const src of activeSources.keys()) {
+        try { src.stop() } catch { /* already ended */ }
     }
     activeSources.clear()
 }

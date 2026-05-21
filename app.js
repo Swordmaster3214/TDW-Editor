@@ -280,13 +280,6 @@ export function exportTDWFile() {
     })
 }
 
-export function openInTDW() {
-    import('./io/exporter.js').then(({ exportToTDW }) => {
-        const seq = exportToTDW(state.project)
-        window.open(`https://thirtydollar.website/#${encodeURIComponent(seq)}`, '_blank')
-    })
-}
-
 export function importTDWFile(file) {
     const reader = new FileReader()
     reader.onload = e => {

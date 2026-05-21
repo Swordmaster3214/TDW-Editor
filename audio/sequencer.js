@@ -14,6 +14,7 @@ import {
     prefetchSounds,
     playSound,
     cutAll,
+    cutBefore,
     getCurrentTime,
     resumeContext,
 } from './engine.js'
@@ -44,22 +45,27 @@ function applyModifier(current, newVal, modifier) {
 // TDW's preloadSequence(). Returns { events, soundIds }.
 //
 // events is sorted by time. Each entry is either:
-//   { type: 'sound', id, time, pitch, volume, pan }
+//   { type: 'sound', id, time, pitch, volume, pan, slotIndex }
 //   { type: 'cut',   time }
 export function buildSchedule(project) {
     const slots  = project.slots
     const events = []
     const soundIds = new Set()
 
-    let bpm          = project.bpm
-    let volume       = 100
+    let bpm           = project.bpm
+    let volume        = 100
     let transposition = 0
-    let loopTarget   = 0
-    let timer        = 0   // seconds
+    let loopTarget    = 0
+    let timer         = 0   // seconds
 
     // Loop/jump state -- avoids mutating project slots
     const remaining = new Map()   // slotIndex -> beats/loops left
-    const triggered = new Set()   // slotIndices that have fired their one-shot
+    const triggered = new Set()   // slotIndices that have fired their one-shot (loop/looponce)
+
+    // jump slots are tracked separately and NEVER cleared by loop resets.
+    // Without this, looping back past a jump slot re-enables it, causing
+    // infinite loops even when the sequence is only supposed to jump once.
+    const jumpFired = new Set()
 
     let index = 0
 
@@ -108,7 +114,7 @@ export function buildSchedule(project) {
                     const left = remaining.has(index) ? remaining.get(index) : val
                     if (left > 0) {
                         remaining.set(index, left - 1)
-                        // Reset triggered state for everything after the new index
+                        // Clear one-shot loop triggers after the new target position
                         for (const k of triggered) {
                             if (k > loopTarget) triggered.delete(k)
                         }
@@ -133,8 +139,10 @@ export function buildSchedule(project) {
                     break
                 }
                 case 'jump': {
-                    if (!triggered.has(index)) {
-                        triggered.add(index)
+                    // jumpFired is never cleared -- each jump slot fires at most once
+                    // regardless of how many times the sequence loops past it.
+                    if (!jumpFired.has(index)) {
+                        jumpFired.add(index)
                         const targetIdx = slots.findIndex((s, i) =>
                         s.isControl &&
                         s.name === 'target' &&
@@ -170,22 +178,20 @@ export function buildSchedule(project) {
 
         // -- Sound slots (possibly a chord) --
         for (const sound of slot.sounds) {
-            // sound.id is the tdwId (may be emoji) -- resolve to the plain id
-            // that the audio engine uses to build the wav file URL
             const audioId = resolveAudioId(sound.id)
             soundIds.add(audioId)
 
-            // Per-sound volume override (null = inherit 100)
             const perVol = sound.volume ?? 100
 
             events.push({
-                type:   'sound',
-                id:     audioId,
-                time:   timer,
-                pitch:  clamp((sound.pitch || 0) + transposition, -72, 72),
+                type:      'sound',
+                id:        audioId,
+                time:      timer,
+                pitch:     clamp((sound.pitch || 0) + transposition, -72, 72),
                         // Match TDW: global volume * (per-sound vol / 100), /200 in engine
-                        volume: volume * clamp(perVol / 100, 0, 4),
-                        pan:    0,
+                        volume:    volume * clamp(perVol / 100, 0, 4),
+                        pan:       0,
+                        slotIndex: index,   // used to fire the "played" visual update
             })
         }
 
@@ -254,10 +260,19 @@ function queueWindow() {
                         pan:    ev.pan,
                         playAt: when,
                     })
+                    // Fire the visual "played" indicator at actual playback time, not queue time
+                    const msUntilPlay = Math.max(0, (when - now) * 1000)
+                    const capturedIndex = ev.slotIndex
+                    setTimeout(() => {
+                        document.dispatchEvent(new CustomEvent('slotplay', { detail: { index: capturedIndex } }))
+                    }, msUntilPlay)
                 } else if (ev.type === 'cut') {
-                    // Approximate: fire cutAll at the right wall-clock moment
-                    const delay = Math.max(0, (when - now) * 1000)
-                    setTimeout(cutAll, delay)
+                    // Only cut sounds that started at or before this moment -- later-queued
+                    // sounds must survive. cutAll() would kill them too, which caused the
+                    // original bug where !cut silenced the note immediately following it.
+                    const cutAt = when
+                    const msUntilCut = Math.max(0, (cutAt - now) * 1000)
+                    setTimeout(() => cutBefore(cutAt), msUntilCut)
                 }
 
                 nextToQueue++
@@ -277,4 +292,7 @@ export function stop() {
 
     if (endTimer   !== null) { clearTimeout(endTimer);   endTimer   = null }
     if (queueTimer !== null) { clearTimeout(queueTimer); queueTimer = null }
+
+    // Tell the editor to clear any played-slot highlighting
+    document.dispatchEvent(new CustomEvent('slotsclear'))
 }
