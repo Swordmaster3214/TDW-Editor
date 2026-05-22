@@ -28,7 +28,7 @@ export function fetchBuffer(id) {
     if (bufferCache.has(id)) return bufferCache.get(id)
 
         const promise = (async () => {
-            const url = `/sounds/${encodeURIComponent(id)}.wav`
+            const url = `./sounds/${encodeURIComponent(id)}.wav`
             const res = await fetch(url)
             if (!res.ok) throw new Error(`Sound not found: ${id} (${res.status})`)
                 const raw = await res.arrayBuffer()

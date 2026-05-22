@@ -222,7 +222,7 @@ export function resolveAudioId(tdwId) {
 
 export async function loadSounds() {
     try {
-        const res  = await fetch('/sounds.json')
+        const res  = await fetch('./sounds.json')
         const list = await res.json()
         list.forEach(s => {
             // The TDW token for a sound is its emoji if it has one, otherwise its id.
