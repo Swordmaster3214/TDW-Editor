@@ -44,7 +44,7 @@ jobs:
       - name: Sync sounds from upstream
         id: sync
         env:
-          SOUNDS_BASE_URL: https://example.com
+          SOUNDS_BASE_URL: https://thirtydollar.website
           CONCURRENCY: "24"
         run: node ./sync_sounds.mjs
 
