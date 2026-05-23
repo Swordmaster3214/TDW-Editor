@@ -526,9 +526,27 @@
   import * as Seq     from './audio/sequencer.js'
   import { Fraction } from './model/fraction.js'
 
+  // -- DOM Element Cache (perf optimization: cache frequently-accessed elements) --
+  const domCache = {
+    bpmInput:        document.getElementById('bpmInput'),
+    timeSigNum:      document.getElementById('timeSigNum'),
+    timeSigDen:      document.getElementById('timeSigDen'),
+    sbTrack:         document.getElementById('sbTrack'),
+    sbSlots:         document.getElementById('sbSlots'),
+    sbCursor:        document.getElementById('sbCursor'),
+    sbBPM:           document.getElementById('sbBPM'),
+    sbSelection:     document.getElementById('sbSelection'),
+    sbSelRange:      document.getElementById('sbSelRange'),
+    sbUndo:          document.getElementById('sbUndo'),
+    sbPlaying:       document.getElementById('sbPlaying'),
+    seqWrap:         document.getElementById('seq-wrap'),
+    btnPlay:         document.getElementById('btnPlay'),
+    durPicker:       document.getElementById('durPicker'),
+  }
+
   // Boot
   App.loadSounds()
-  Editor.init(document.getElementById('seq-wrap'))
+  Editor.init(domCache.seqWrap)
   Picker.init(document.getElementById('picker'))
   Actions.init(document.getElementById('actions-panel'))
 
@@ -544,20 +562,19 @@
 
   // -- Toolbar wiring --
 
-  const bpmInput = document.getElementById('bpmInput')
-  bpmInput.addEventListener('change', () => App.setBPM(+bpmInput.value))
-  bpmInput.addEventListener('input',  () => App.setBPM(+bpmInput.value))
+  domCache.bpmInput.addEventListener('change', () => App.setBPM(+domCache.bpmInput.value))
+  domCache.bpmInput.addEventListener('input',  () => App.setBPM(+domCache.bpmInput.value))
 
-  document.getElementById('timeSigNum').addEventListener('change', updateTimeSig)
-  document.getElementById('timeSigDen').addEventListener('change', updateTimeSig)
+  domCache.timeSigNum.addEventListener('change', updateTimeSig)
+  domCache.timeSigDen.addEventListener('change', updateTimeSig)
   function updateTimeSig() {
     App.setTimeSignature(
-      +document.getElementById('timeSigNum').value,
-      +document.getElementById('timeSigDen').value
+      +domCache.timeSigNum.value,
+      +domCache.timeSigDen.value
     )
   }
 
-  document.getElementById('durPicker').addEventListener('click', e => {
+  domCache.durPicker.addEventListener('click', e => {
     const btn = e.target.closest('.dur-btn')
     if (!btn) return
     document.querySelectorAll('.dur-btn').forEach(b => b.classList.remove('active'))
@@ -588,9 +605,7 @@
 
   // -- Play / Stop --
 
-  const btnPlay = document.getElementById('btnPlay')
-
-  btnPlay.addEventListener('click', async () => {
+  domCache.btnPlay.addEventListener('click', async () => {
     if (Seq.isActive()) {
       Seq.stop()
       setPlayUI(false)
@@ -613,22 +628,21 @@
   })
 
   function setPlayUI(state) {
-    const playing = document.getElementById('sbPlaying')
     if (state === 'loading') {
-      btnPlay.textContent = '… Loading'
-      btnPlay.className   = 'loading'
-      btnPlay.disabled    = true
-      playing.classList.remove('active')
+      domCache.btnPlay.textContent = '… Loading'
+      domCache.btnPlay.className   = 'loading'
+      domCache.btnPlay.disabled    = true
+      domCache.sbPlaying.classList.remove('active')
     } else if (state === 'playing') {
-      btnPlay.textContent = '⏹ Stop'
-      btnPlay.className   = 'playing'
-      btnPlay.disabled    = false
-      playing.classList.add('active')
+      domCache.btnPlay.textContent = '⏹ Stop'
+      domCache.btnPlay.className   = 'playing'
+      domCache.btnPlay.disabled    = false
+      domCache.sbPlaying.classList.add('active')
     } else {
-      btnPlay.textContent = '▶ Play'
-      btnPlay.className   = 'primary'
-      btnPlay.disabled    = false
-      playing.classList.remove('active')
+      domCache.btnPlay.textContent = '▶ Play'
+      domCache.btnPlay.className   = 'primary'
+      domCache.btnPlay.disabled    = false
+      domCache.sbPlaying.classList.remove('active')
     }
   }
 
@@ -640,30 +654,29 @@
     }
   })
 
-  // -- Status bar --
+  // -- Status bar (optimized: use cached DOM references) --
   document.addEventListener('statechange', () => {
     const { project, activeTrackIndex, cursorPos, selection, undoStack } = App.state
     const track = App.activeTrack()
 
-    document.getElementById('sbTrack').textContent  = `${activeTrackIndex + 1} / ${project.tracks.length}`
-    document.getElementById('sbSlots').textContent  = track.slots.length
-    document.getElementById('sbCursor').textContent = cursorPos
-    document.getElementById('sbBPM').textContent    = project.bpm
+    domCache.sbTrack.textContent  = `${activeTrackIndex + 1} / ${project.tracks.length}`
+    domCache.sbSlots.textContent  = track.slots.length
+    domCache.sbCursor.textContent = cursorPos
+    domCache.sbBPM.textContent    = project.bpm
 
-    bpmInput.value = project.bpm
-    document.getElementById('timeSigNum').value = project.timeSignature.numerator
-    document.getElementById('timeSigDen').value = project.timeSignature.denominator
+    domCache.bpmInput.value = project.bpm
+    domCache.timeSigNum.value = project.timeSignature.numerator
+    domCache.timeSigDen.value = project.timeSignature.denominator
 
-    const selEl = document.getElementById('sbSelection')
     if (selection) {
-      selEl.style.display = ''
-      document.getElementById('sbSelRange').textContent =
+      domCache.sbSelection.style.display = ''
+      domCache.sbSelRange.textContent =
         `${selection.start}–${selection.end} (${selection.end - selection.start + 1} slots)`
     } else {
-      selEl.style.display = 'none'
+      domCache.sbSelection.style.display = 'none'
     }
 
-    document.getElementById('sbUndo').style.display = undoStack.length ? '' : 'none'
+    domCache.sbUndo.style.display = undoStack.length ? '' : 'none'
   })
 </script>
 </body>

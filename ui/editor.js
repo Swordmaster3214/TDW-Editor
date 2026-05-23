@@ -12,7 +12,11 @@ import { previewSound } from '../audio/engine.js'
 // the right lane without a full re-render on every note.
 const playedSlots = new Map()
 
+// Cache the seq-wrap element to avoid repeated queries
+let seqWrapElement = null
+
 export function init(container) {
+    seqWrapElement = container
     container.setAttribute('tabindex', '0')
     container.addEventListener('keydown',     onKeyDown)
     container.addEventListener('click',       onContainerClick)
@@ -156,7 +160,7 @@ function buildLane(track, trackIndex, isActive, cursorPos, selection) {
                     } else {
                         App.setCursor(i + 1)
                     }
-                    document.getElementById('seq-wrap').focus()
+                    seqWrapElement.focus()
                 })
 
                 el.addEventListener('contextmenu', e => {
@@ -181,7 +185,7 @@ function buildLane(track, trackIndex, isActive, cursorPos, selection) {
         } else {
             App.setCursor(App.activeTrack().slots.length)
         }
-        document.getElementById('seq-wrap').focus()
+        seqWrapElement.focus()
     })
 
     lane.appendChild(seqEl)
@@ -263,6 +267,7 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
             img.src   = soundInfo?.imageLink ?? `https://thirtydollar.website/icons/${sound.id}.png`
             img.alt   = soundInfo?.name ?? sound.id
             img.className = 'seq-icon'
+            img.loading = 'lazy'  // Lazy-load images in the editor
             wrap.appendChild(img)
 
             if (sound.pitch !== 0) {
@@ -343,5 +348,5 @@ function onKeyDown(e) {
 
 function onContainerClick() {
     // Clicking dead space in the container (between lanes) focuses it
-    document.getElementById('seq-wrap').focus()
+    seqWrapElement.focus()
 }

@@ -19,6 +19,13 @@ export const state = {
     redoStack:        [],
 }
 
+// Sound ID lookup cache: Map<tdwId, sound> for O(1) lookups instead of O(n)
+let soundIdCache = null
+
+// Undo/redo debounce: only snapshot once per 200ms to group rapid edits
+let undoDebounceTimer = null
+const UNDO_DEBOUNCE_MS = 200
+
 // -- Active track helper --
 
 export function activeTrack() {
@@ -32,12 +39,19 @@ function notify() {
     document.dispatchEvent(new CustomEvent('statechange'))
 }
 
-// -- Undo/redo --
+// -- Undo/redo (debounced) --
 
 function snapshot() {
-    state.undoStack.push(JSON.stringify(state.project.tracks.map(t => t.toJSON())))
-    state.redoStack = []
-    if (state.undoStack.length > 100) state.undoStack.shift()
+    // Clear any pending debounce timer
+    if (undoDebounceTimer) clearTimeout(undoDebounceTimer)
+
+        // Debounce: only create snapshot after user stops editing for 200ms
+        undoDebounceTimer = setTimeout(() => {
+            state.undoStack.push(JSON.stringify(state.project.tracks.map(t => t.toJSON())))
+            state.redoStack = []
+            if (state.undoStack.length > 100) state.undoStack.shift()
+                undoDebounceTimer = null
+        }, UNDO_DEBOUNCE_MS)
 }
 
 function restoreTracks(raw) {
@@ -50,6 +64,11 @@ function restoreTracks(raw) {
 
 export function undo() {
     if (!state.undoStack.length) return
+        // Immediately flush any pending snapshot
+        if (undoDebounceTimer) {
+            clearTimeout(undoDebounceTimer)
+            undoDebounceTimer = null
+        }
         state.redoStack.push(JSON.stringify(state.project.tracks.map(t => t.toJSON())))
         restoreTracks(JSON.parse(state.undoStack.pop()))
         notify()
@@ -57,6 +76,11 @@ export function undo() {
 
 export function redo() {
     if (!state.redoStack.length) return
+        // Immediately flush any pending snapshot
+        if (undoDebounceTimer) {
+            clearTimeout(undoDebounceTimer)
+            undoDebounceTimer = null
+        }
         state.undoStack.push(JSON.stringify(state.project.tracks.map(t => t.toJSON())))
         restoreTracks(JSON.parse(state.redoStack.pop()))
         notify()
@@ -270,9 +294,19 @@ export function setActiveDuration(fraction) {
 
 // -- Sound list --
 
+// Build the sound ID cache after loading sounds
+function buildSoundIdCache() {
+    soundIdCache = new Map()
+    for (const s of state.soundList) {
+        soundIdCache.set(s.tdwId, s)
+        soundIdCache.set(s.id, s)
+    }
+}
+
 // Resolve a tdwId (may be emoji) back to the plain id used for audio filenames.
+// Now O(1) instead of O(n) thanks to the cache.
 export function resolveAudioId(tdwId) {
-    const found = state.soundList.find(s => s.tdwId === tdwId || s.id === tdwId)
+    const found = soundIdCache?.get(tdwId)
     return found ? found.id : tdwId
 }
 
@@ -287,6 +321,7 @@ export async function loadSounds() {
             : `https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/svg/${(s.emoji || s.id).codePointAt(0).toString(16)}.svg`
         })
         state.soundList = list
+        buildSoundIdCache()
         notify()
     } catch (e) {
         console.error('Could not load sounds.json:', e)
