@@ -83,9 +83,12 @@ function buildLane(track, trackIndex, isActive, cursorPos, selection) {
     nameInput.className = 'track-name-input'
     nameInput.value     = track.name
     nameInput.title     = 'Click to rename'
-    nameInput.addEventListener('click', e => {
+    nameInput.addEventListener('mousedown', e => {
         e.stopPropagation()
-        App.setActiveTrack(trackIndex)
+        // Only set active track if this is not already the active track
+        if (trackIndex !== App.state.activeTrackIndex) {
+            App.setActiveTrack(trackIndex)
+        }
     })
     nameInput.addEventListener('change', () => App.renameTrack(trackIndex, nameInput.value))
     nameInput.addEventListener('keydown', e => {

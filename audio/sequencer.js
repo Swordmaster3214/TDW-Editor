@@ -219,6 +219,7 @@ let nextToQueue = 0
 let isPlaying   = false
 let endTimer    = null
 let queueTimer  = null
+let pendingSlotPlayTimeouts = []  // Track all pending slotplay timeouts
 
 export function isActive() { return isPlaying }
 
@@ -266,11 +267,12 @@ function queueWindow() {
                     const msUntilPlay   = Math.max(0, (when - now) * 1000)
                     const capturedIndex = ev.slotIndex
                     const capturedTrack = ev.trackIndex
-                    setTimeout(() => {
+                    const timeoutId = setTimeout(() => {
                         document.dispatchEvent(new CustomEvent('slotplay', {
                             detail: { index: capturedIndex, trackIndex: capturedTrack }
                         }))
                     }, msUntilPlay)
+                    pendingSlotPlayTimeouts.push(timeoutId)
                 } else if (ev.type === 'cut') {
                     const cutAt       = when
                     const msUntilCut  = Math.max(0, (cutAt - now) * 1000)
@@ -295,5 +297,12 @@ export function stop() {
     if (endTimer   !== null) { clearTimeout(endTimer);   endTimer   = null }
     if (queueTimer !== null) { clearTimeout(queueTimer); queueTimer = null }
 
+    // Clear all pending slotplay timeouts so no more markers are created
+    for (const timeoutId of pendingSlotPlayTimeouts) {
+        clearTimeout(timeoutId)
+    }
+    pendingSlotPlayTimeouts = []
+
+    // Dispatch slotsclear to reset all played indicators
     document.dispatchEvent(new CustomEvent('slotsclear'))
 }
