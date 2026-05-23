@@ -1,14 +1,8 @@
-// Sequence scheduler. Ports TDW's preloadSequence + playSequence logic to
-// the Web Audio API -- no jQuery, no DOM, just timing math and audio calls.
+// Sequence scheduler. Builds a merged event schedule across all active
+// tracks and queues audio 5 seconds ahead in a rolling window.
 //
-// Key design notes lifted from TDW's source:
-//   - A flat "order" array is built first (buildSchedule), then sounds are
-//     queued 5 seconds ahead of playback time in a rolling window.
-//   - BPM and volume changes mid-sequence are handled by tracking them as
-//     state while walking the slot list, so each event gets the right values
-//     baked in at schedule-build time.
-//   - Loops work by resetting the walk index and keeping a "remaining" map
-//     so we don't have to mutate the original project data.
+// Each track runs its own BPM/volume/transpose state independently.
+// Events from all tracks are merged and sorted by absolute time.
 
 import {
     prefetchSounds,
@@ -20,71 +14,41 @@ import {
 } from './engine.js'
 import { resolveAudioId } from '../app.js'
 
-const QUEUE_AHEAD_SECS = 5
-const MAX_SCHEDULE_SECS = 60 * 10   // 10 minute safety limit for runaway loops
+const QUEUE_AHEAD_SECS  = 5
+const MAX_SCHEDULE_SECS = 60 * 10   // 10 minute safety cap for runaway loops
 
-function beatLen(bpm) {
-    return 60 / bpm   // seconds per beat
-}
+function beatLen(bpm)        { return 60 / bpm }
+function clamp(v, lo, hi)    { return Math.max(lo, Math.min(hi, v)) }
 
-function clamp(v, lo, hi) {
-    return Math.max(lo, Math.min(hi, v))
-}
-
-// Mirrors TDW's modifyNumber -- applies set / add / multiply / divide
 function applyModifier(current, newVal, modifier) {
     switch (modifier) {
         case '+':      return current + newVal
         case 'x':      return current * newVal
         case 'divide': return newVal <= 0 ? current : current / newVal
-        default:       return newVal   // null = set
+        default:       return newVal
     }
 }
 
-// Helper to untrigger all one-shot actions (loops, remaining state)
-// after a given index. Used when looping back.
-function untriggerAfter(index, slots, triggered, remaining) {
+// Clears loop-related state within the range (dst, src) exclusive --
+// called when looping backward so the body replays correctly.
+function clearRangeExclusive(dst, src, slots, triggered, remaining) {
     for (const k of triggered) {
-        if (k > index && slots[k].isControl && slots[k].name === 'loop') {
-            triggered.delete(k)
+        if (k > dst && k < src) {
+            const s = slots[k]
+            if (s?.isControl && (s.name === 'jump' || s.name === 'loop' || s.name === 'loopmany')) {
+                triggered.delete(k)
+            }
         }
     }
-    for (const k of remaining) {
-        if (k > index) remaining.delete(k)
+    for (const k of remaining.keys()) {
+        if (k > dst && k < src) remaining.delete(k)
     }
 }
 
-// Helper to untrigger jump triggers within the loop body (between loopTarget and current index).
-// This allows jumps to fire again on the next loop iteration.
-function resetJumpsInLoop(loopTarget, currentIndex, slots, triggered) {
-    for (const k of triggered) {
-        if (k > loopTarget && k < currentIndex && slots[k].isControl && slots[k].name === 'jump') {
-            triggered.delete(k)
-        }
-    }
-}
-
-// Helper to untrigger only loop-related state after a jump target,
-// preserving jump triggers so they don't fire again.
-function untriggerLoopsAfter(index, slots, triggered, remaining) {
-    for (const k of triggered) {
-        if (k > index && slots[k].isControl && slots[k].name === 'loop') {
-            triggered.delete(k)
-        }
-    }
-    for (const k of remaining) {
-        if (k > index) remaining.delete(k)
-    }
-}
-
-// Walk the slot list and produce a flat list of timed events, similar to
-// TDW's preloadSequence(). Returns { events, soundIds }.
-//
-// events is sorted by time. Each entry is either:
-//   { type: 'sound', id, time, pitch, volume, pan, slotIndex }
-//   { type: 'cut',   time }
-export function buildSchedule(project) {
-    const slots  = project.slots
+// Build a schedule for one track. Returns { events, soundIds }.
+// Events are tagged with trackIndex so the editor can highlight the right lane.
+function buildTrackSchedule(project, track, trackIndex) {
+    const slots  = track.slots
     const events = []
     const soundIds = new Set()
 
@@ -92,149 +56,133 @@ export function buildSchedule(project) {
     let volume        = 100
     let transposition = 0
     let loopTarget    = 0
-    let timer         = 0   // seconds
+    let timer         = 0
 
-    // Loop/jump state -- avoids mutating project slots
-    const remaining = new Map()   // slotIndex -> beats/loops left
-    const triggered = new Set()   // slotIndices that have fired their one-shot (loop/jump)
+    const remaining = new Map()
+    const triggered = new Set()
 
     let index = 0
 
     while (index < slots.length) {
         if (timer > MAX_SCHEDULE_SECS) {
-            console.warn('[sequencer] Schedule truncated at 10 min safety limit')
+            console.warn(`[sequencer] Track ${trackIndex} truncated at 10 min safety limit`)
             break
         }
 
         const slot = slots[index]
 
-        // -- Control slots --
         if (slot.isControl) {
             const name = slot.name
             const val  = slot.value ?? 0
-            const mod  = slot.modifier   // null | '+' | 'x' | 'divide'
+            const mod  = slot.modifier
 
             switch (name) {
-                case 'speed': {
-                    bpm = applyModifier(bpm, val, mod)
-                    bpm = +clamp(bpm, 5, 20000).toFixed(4)
+                case 'speed':
+                    bpm = +clamp(applyModifier(bpm, val, mod), 5, 20000).toFixed(4)
                     break
-                }
-                case 'volume': {
-                    volume = applyModifier(volume, val, mod)
-                    volume = +clamp(volume, 0, 600).toFixed(4)
+
+                case 'volume':
+                    volume = +clamp(applyModifier(volume, val, mod), 0, 600).toFixed(4)
                     break
-                }
-                case 'transpose': {
-                    transposition = applyModifier(transposition, val, mod)
-                    transposition = +clamp(transposition, -60, 60).toFixed(4)
+
+                case 'transpose':
+                    transposition = +clamp(applyModifier(transposition, val, mod), -60, 60).toFixed(4)
                     break
-                }
+
                 case 'stop': {
                     const beats = remaining.has(index) ? remaining.get(index) : val
                     if (beats > 0) {
                         timer += beatLen(bpm) * Math.min(1, beats)
                         remaining.set(index, Math.max(0, beats - 1))
-                        index--   // revisit this slot next iteration
+                        index--
                     } else {
                         remaining.delete(index)
                     }
                     break
                 }
+
                 case 'loopmany': {
                     const left = remaining.has(index) ? remaining.get(index) : val
                     if (left > 0) {
                         remaining.set(index, left - 1)
-                        // Reset jumps within the loop body
-                        resetJumpsInLoop(loopTarget, index, slots, triggered)
-                        // Untrigger loops after the loop target
-                        untriggerAfter(loopTarget, slots, triggered, remaining)
+                        clearRangeExclusive(loopTarget, index, slots, triggered, remaining)
                         index = loopTarget - 1
                     } else {
                         remaining.delete(index)
                     }
                     break
                 }
+
                 case 'loop': {
-                    // Treat loop as loopmany with 1 iteration
                     const left = remaining.has(index) ? remaining.get(index) : 1
                     if (left > 0) {
                         remaining.set(index, left - 1)
-                        // Reset jumps within the loop body
-                        resetJumpsInLoop(loopTarget, index, slots, triggered)
-                        // Untrigger loops after the loop target
-                        untriggerAfter(loopTarget, slots, triggered, remaining)
+                        clearRangeExclusive(loopTarget, index, slots, triggered, remaining)
                         index = loopTarget - 1
                     } else {
                         remaining.delete(index)
                     }
                     break
                 }
-                case 'looptarget': {
+
+                case 'looptarget':
                     loopTarget = index
                     break
-                }
+
                 case 'jump': {
-                    // Jump fires at most once per walk (not cleared by loops)
                     if (!triggered.has(index)) {
                         triggered.add(index)
-                        // Find a target with matching value (targets are always available)
                         const targetIdx = slots.findIndex((s, i) =>
-                        s.isControl &&
-                        s.name === 'target' &&
-                        s.value == val
+                        s.isControl && s.name === 'target' && s.value == val
                         )
                         if (targetIdx >= 0) {
-                            // Only untrigger loops after the jump target, not jumps
-                            untriggerLoopsAfter(targetIdx, slots, triggered, remaining)
+                            for (const k of remaining.keys()) {
+                                if (k > targetIdx) remaining.delete(k)
+                            }
                             index = targetIdx
                         }
                     }
                     break
                 }
-                case 'target': {
-                    // Just a marker, no action needed
+
+                case 'target':
                     break
-                }
-                case 'cut': {
+
+                case 'cut':
                     events.push({ type: 'cut', time: timer })
                     break
-                }
-                case 'startpos': {
-                    // Marker for resume position. No audio effect.
-                    // (Scrubbing/divider logic handled at playback time if needed)
+
+                case 'startpos':
                     break
-                }
-                // divider, flash, pulse, bg -- no audio effect
+
+                    // divider, flash, pulse, bg -- no audio effect
             }
 
             index++
             continue
         }
 
-        // -- Rest slots --
         if (slot.isRest) {
             timer += beatLen(bpm) * slot.duration.toDecimal()
             index++
             continue
         }
 
-        // -- Sound slots (possibly a chord) --
+        // Sound slot
         for (const sound of slot.sounds) {
             const audioId = resolveAudioId(sound.id)
             soundIds.add(audioId)
 
             const perVol = sound.volume ?? 100
-
             events.push({
-                type:      'sound',
-                id:        audioId,
-                time:      timer,
-                pitch:     clamp((sound.pitch || 0) + transposition, -72, 72),
-                        // Match TDW: global volume * (per-sound vol / 100), /200 in engine
-                        volume:    volume * clamp(perVol / 100, 0, 4),
-                        pan:       0,
-                        slotIndex: index,   // used to fire the "played" visual update
+                type:       'sound',
+                id:         audioId,
+                time:       timer,
+                pitch:      clamp((sound.pitch || 0) + transposition, -72, 72),
+                        volume:     volume * clamp(perVol / 100, 0, 4),
+                        pan:        0,
+                        slotIndex:  index,
+                        trackIndex,
             })
         }
 
@@ -246,19 +194,34 @@ export function buildSchedule(project) {
     return { events, soundIds }
 }
 
+// Merge schedules from all active tracks into one sorted event list.
+export function buildSchedule(project) {
+    const hasSolo  = project.tracks.some(t => t.solo)
+    const allEvents  = []
+    const allSoundIds = new Set()
+
+    project.tracks.forEach((track, trackIndex) => {
+        if (hasSolo ? !track.solo : track.muted) return
+            const { events, soundIds } = buildTrackSchedule(project, track, trackIndex)
+            for (const ev of events) allEvents.push(ev)
+                for (const id of soundIds) allSoundIds.add(id)
+    })
+
+    allEvents.sort((a, b) => a.time - b.time)
+    return { events: allEvents, soundIds: allSoundIds }
+}
+
 // -- Playback state --
 
-let startTime    = 0
-let schedule     = []
-let nextToQueue  = 0
-let isPlaying    = false
-let endTimer     = null
-let queueTimer   = null
+let startTime   = 0
+let schedule    = []
+let nextToQueue = 0
+let isPlaying   = false
+let endTimer    = null
+let queueTimer  = null
 
 export function isActive() { return isPlaying }
 
-// Start playing a project. Resolves after sounds are prefetched and playback begins.
-// onStop is called when the sequence ends naturally.
 export async function play(project, { onStop } = {}) {
     stop()
 
@@ -266,7 +229,6 @@ export async function play(project, { onStop } = {}) {
     schedule    = events
     nextToQueue = 0
 
-    // Prefetch all needed sounds before we start the clock
     await prefetchSounds([...soundIds])
     await resumeContext()
 
@@ -275,8 +237,7 @@ export async function play(project, { onStop } = {}) {
 
     queueWindow()
 
-    // Schedule end-of-sequence callback based on last event time
-    const lastTime = schedule.length ? schedule[schedule.length - 1].time : 0
+    const lastTime   = schedule.length ? schedule[schedule.length - 1].time : 0
     const msUntilEnd = (lastTime + 1.5) * 1000
     endTimer = setTimeout(() => {
         stop()
@@ -284,7 +245,6 @@ export async function play(project, { onStop } = {}) {
     }, msUntilEnd)
 }
 
-// Queue sounds within the lookahead window, rescheduling itself each second
 function queueWindow() {
     if (!isPlaying) return
 
@@ -303,18 +263,17 @@ function queueWindow() {
                         pan:    ev.pan,
                         playAt: when,
                     })
-                    // Fire the visual "played" indicator at actual playback time, not queue time
-                    const msUntilPlay = Math.max(0, (when - now) * 1000)
+                    const msUntilPlay   = Math.max(0, (when - now) * 1000)
                     const capturedIndex = ev.slotIndex
+                    const capturedTrack = ev.trackIndex
                     setTimeout(() => {
-                        document.dispatchEvent(new CustomEvent('slotplay', { detail: { index: capturedIndex } }))
+                        document.dispatchEvent(new CustomEvent('slotplay', {
+                            detail: { index: capturedIndex, trackIndex: capturedTrack }
+                        }))
                     }, msUntilPlay)
                 } else if (ev.type === 'cut') {
-                    // Only cut sounds that started at or before this moment -- later-queued
-                    // sounds must survive. cutAll() would kill them too, which caused the
-                    // original bug where !cut silenced the note immediately following it.
-                    const cutAt = when
-                    const msUntilCut = Math.max(0, (cutAt - now) * 1000)
+                    const cutAt       = when
+                    const msUntilCut  = Math.max(0, (cutAt - now) * 1000)
                     setTimeout(() => cutBefore(cutAt), msUntilCut)
                 }
 
@@ -336,6 +295,5 @@ export function stop() {
     if (endTimer   !== null) { clearTimeout(endTimer);   endTimer   = null }
     if (queueTimer !== null) { clearTimeout(queueTimer); queueTimer = null }
 
-    // Tell the editor to clear any played-slot highlighting
     document.dispatchEvent(new CustomEvent('slotsclear'))
 }

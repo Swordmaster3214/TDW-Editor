@@ -1,17 +1,18 @@
-import { Project }      from '../model/project.js'
-import { Slot }         from '../model/slot.js'
-import { Sound }        from '../model/sound.js'
-import { Fraction }     from '../model/fraction.js'
+import { Project }     from '../model/project.js'
+import { Track }       from '../model/track.js'
+import { Slot }        from '../model/slot.js'
+import { Sound }       from '../model/sound.js'
+import { Fraction }    from '../model/fraction.js'
 import { ControlSlot, ACTION_BY_NAME } from '../model/controlslot.js'
 
-// Imports a flat TDW sequence string into a Project.
+// Imports a flat TDW sequence string into a Project with a single Track.
 //
 // Shallow by design -- we don't try to reverse-engineer time signatures or
 // subdivision structure. Every sound slot gets duration 1/1 (quarter note)
 // and the BPM is inferred from the first !speed directive.
 //
 // All control items become proper ControlSlot instances so they survive
-// a round-trip export without any data loss.
+// a round-trip export without data loss.
 
 export function importFromTDW(text) {
     const tokens = text.trim().split('|').flatMap(expandRepeat)
@@ -51,20 +52,19 @@ export function importFromTDW(text) {
                 continue
             }
 
-            // Grab the first !speed to set the project BPM
+            // Grab the first absolute !speed to set the project BPM
             if (name === 'speed' && !foundFirstSpeed && modifier === null) {
                 const parsed = parseFloat(value)
                 if (!isNaN(parsed)) bpm = parsed
                     foundFirstSpeed = true
-                    pendingCombine = false
+                    pendingCombine  = false
                     continue
             }
 
             // Everything else (including subsequent !speed changes) becomes a ControlSlot
             const parsedValue = (value === null) ? null : (isNaN(+value) ? value : +value)
-            // For two-value items the modifier slot actually holds value2
-            const action = ACTION_BY_NAME[name]
-            const isValue2 = action?.twoValues && modifier !== null
+            const action      = ACTION_BY_NAME[name]
+            const isValue2    = action?.twoValues && modifier !== null
             slots.push(new ControlSlot({
                 name,
                 value:    parsedValue,
@@ -91,10 +91,12 @@ export function importFromTDW(text) {
         pendingCombine = false
     }
 
-    return new Project({ bpm, slots })
+    return new Project({
+        bpm,
+        tracks: [new Track({ name: 'Track 1', slots })],
+    })
 }
 
-// Expands the =n repeat suffix: "boom@0=4" -> ["boom@0","boom@0","boom@0","boom@0"]
 function expandRepeat(token) {
     const match = token.match(/^(.+?)=(\d+)$/)
     if (!match) return [token]
@@ -102,7 +104,6 @@ function expandRepeat(token) {
         return Array.from({ length: parseInt(n, 10) }, () => base)
 }
 
-// Splits "id@value@modifier" into its three parts
 function splitToken(token) {
     const parts = token.split('@')
     return {

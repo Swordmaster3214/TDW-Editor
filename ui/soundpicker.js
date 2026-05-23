@@ -1,6 +1,6 @@
 // Sound picker sidebar. Groups sounds by TDW's group field and supports
-// searching by name, ID, tags (e.g. "percussion"), and source (e.g. "Rhythm Heaven").
-// Click = insert at cursor. Ctrl+click = add to chord. Right-click = preview.
+// searching by name, ID, tags, and source. Click = insert. Ctrl+click = chord.
+// Right-click = preview.
 
 import * as App from '../app.js'
 import { previewSound } from '../audio/engine.js'
@@ -60,13 +60,10 @@ function buildSoundList(sounds, listEl) {
 
     for (const [groupName, items] of Object.entries(groups)) {
         const header = document.createElement('div')
-        header.className = 'picker-group-header'
+        header.className   = 'picker-group-header'
         header.textContent = groupName
         listEl.appendChild(header)
-
-        for (const s of items) {
-            listEl.appendChild(makeSoundEl(s))
-        }
+        for (const s of items) listEl.appendChild(makeSoundEl(s))
     }
 }
 
@@ -74,8 +71,6 @@ function makeSoundEl(sound) {
     const el = document.createElement('button')
     el.className = 'picker-sound'
 
-    // Dataset uses the plain id for searching, but we insert using tdwId
-    // (emoji takes priority -- that's what TDW sequences actually use)
     el.dataset.id     = sound.id
     el.dataset.name   = (sound.name   || sound.id).toLowerCase()
     el.dataset.tags   = (sound.tags   || []).join(' ').toLowerCase()
@@ -113,15 +108,13 @@ function makeSoundEl(sound) {
         el.appendChild(info)
 
         el.addEventListener('click', e => {
-            // Use tdwId so the stored Sound id matches what TDW expects on export --
-            // emoji for sounds that have one, plain id otherwise
             if (e.ctrlKey || e.metaKey) {
                 App.addToChord(sound.tdwId)
             } else {
                 App.insertSound(sound.tdwId)
                 previewSound(sound.id)
             }
-            document.getElementById('seq').focus()
+            document.getElementById('seq-wrap').focus()
         })
 
         el.addEventListener('contextmenu', e => {
@@ -141,8 +134,8 @@ function filterSounds(query, listEl) {
 
     const terms = query.split(/\s+/).filter(Boolean)
     const groupVisible = new Map()
-
     let currentHeader = null
+
     for (const el of listEl.children) {
         if (el.classList.contains('picker-group-header')) {
             currentHeader = el
