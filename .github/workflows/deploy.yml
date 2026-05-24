@@ -27,7 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
+          
       - name: Restore cached sounds
         id: cache
         uses: actions/cache/restore@v4
@@ -35,8 +35,9 @@ jobs:
           path: |
             sounds
             .sounds-manifest.txt
-          key: sounds-${{ runner.os }}-${{ github.run_id }}
+          key: sounds-${{ runner.os }}-${{ hashFiles('.sounds-manifest.txt') }}-${{ github.run_number }}
           restore-keys: |
+            sounds-${{ runner.os }}-${{ hashFiles('.sounds-manifest.txt') }}-
             sounds-${{ runner.os }}-
 
       - name: Sync sounds from upstream
@@ -47,13 +48,14 @@ jobs:
         run: node ./sync_sounds.mjs
 
       - name: Save updated cache snapshot
-        if: steps.sync.outputs.cache_changed == 'true'
+        # Save if files changed OR if we had a cache miss (ensures baseline health)
+        if: steps.sync.outputs.cache_changed == 'true' || steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
             sounds
             .sounds-manifest.txt
-          key: sounds-${{ runner.os }}-${{ steps.sync.outputs.manifest_hash }}
+          key: sounds-${{ runner.os }}-${{ hashFiles('.sounds-manifest.txt') }}-${{ github.run_number }}
 
       - name: Stage Pages artifact
         run: |
