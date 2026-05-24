@@ -88,7 +88,16 @@ function buildLane(track, trackIndex, isActive, cursorPos, selection) {
         // Only set active track if this is not already the active track
         if (trackIndex !== App.state.activeTrackIndex) {
             App.setActiveTrack(trackIndex)
+
+            const newInput = seqWrapElement?.querySelector(`[data-track="${trackIndex}"] .track-name-input`)
+            if (newInput) {
+                newInput.focus()
+                e.preventDefault()
+            }
         }
+    })
+    nameInput.addEventListener('click', e => {
+        e.stopPropagation()
     })
     nameInput.addEventListener('change', () => App.renameTrack(trackIndex, nameInput.value))
     nameInput.addEventListener('keydown', e => {
