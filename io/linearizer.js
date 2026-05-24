@@ -1,34 +1,75 @@
 // Linearizer -- used by the multi-track exporter only, not for playback.
 //
 // Simulates the full control flow (loops, jumps, speed/volume/transpose
-// changes) for a single track and returns a flat list of timed events:
-//
-//   { type: 'sound', t: seconds, sounds: [{ id, pitch, volume }] }
-//   { type: 'cut',   t: seconds }
-//
-// Key differences from the sequencer:
-//   - Transpose is baked into each sound's pitch at event-build time
-//   - Volume is baked into each sound's effective volume (0-600 range)
-//   - !speed changes alter the timer accumulation instead of being emitted
-//   - Visual-only controls (flash, pulse, bg, divider) are silently dropped
-//   - Hard cap of 20,000 events prevents runaway loops
+// changes) for a single track and returns a flat list of timed events
+// measured in exact fractions of global project beats.
 
 const MAX_EVENTS = 20000
 
-function beatLen(bpm)        { return 60 / bpm }
-function clamp(v, lo, hi)    { return Math.max(lo, Math.min(hi, v)) }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
 
-function applyModifier(current, newVal, modifier) {
+// --- Pure Integer Fraction Helpers ---
+function gcd(a, b) {
+    while (b !== 0n) {
+        const r = a % b
+        a = b
+        b = r
+    }
+    return a < 0n ? -a : a
+}
+
+function createFract(n, d = 1n) {
+    if (d === 0n) throw new Error("Division by zero")
+        if (d < 0n) { n = -n; d = -d; }
+        const g = gcd(n < 0n ? -n : n, d)
+        return { n: n / g, d: d / g }
+}
+
+function numToFract(v) {
+    const s = Number(v).toString()
+    const dot = s.indexOf('.')
+    if (dot === -1) return createFract(BigInt(Math.round(v)), 1n)
+        const decPlaces = s.length - dot - 1
+        const denom = 10n ** BigInt(decPlaces)
+        const num = BigInt(s.replace('.', ''))
+        return createFract(num, denom)
+}
+
+function addFract(a, b) {
+    return createFract(a.n * b.d + b.n * a.d, a.d * b.d)
+}
+
+function mulFract(a, b) {
+    return createFract(a.n * b.n, a.d * b.d)
+}
+
+function divFract(a, b) {
+    return createFract(a.n * b.d, a.d * b.n)
+}
+
+function cmpFract(a, b) {
+    const diff = a.n * b.d - b.n * a.d
+    return diff < 0n ? -1 : (diff > 0n ? 1 : 0)
+}
+
+function clampFract(v, loNum, hiNum) {
+    const lo = createFract(BigInt(loNum))
+    const hi = createFract(BigInt(hiNum))
+    if (cmpFract(v, lo) < 0) return lo
+        if (cmpFract(v, hi) > 0) return hi
+            return v
+}
+
+function applyModifierFract(current, newVal, modifier) {
     switch (modifier) {
-        case '+':      return current + newVal
-        case 'x':      return current * newVal
-        case 'divide': return newVal <= 0 ? current : current / newVal
-        default:       return newVal   // null = set
+        case '+':      return addFract(current, newVal)
+        case 'x':      return mulFract(current, newVal)
+        case 'divide': return newVal.n === 0n ? current : divFract(current, newVal)
+        default:       return newVal
     }
 }
 
 // Clears jumpFired flags and remaining counts for loop bodies.
-// Called when !loop or !loopmany jumps backward from src to dst.
 function clearRangeExclusive(dst, src, slots, triggered, remaining) {
     for (const k of triggered) {
         if (k > dst && k < src) {
@@ -46,15 +87,17 @@ function clearRangeExclusive(dst, src, slots, triggered, remaining) {
 export function linearizeTrack(project, track) {
     const slots = track.slots
 
-    let bpm       = project.bpm
-    let volume    = 100   // percentage; 100 = unity gain in TDW terms
-    let transpose = 0     // semitone offset
-    let loopTarget = 0
+    const projectBpmFract = createFract(BigInt(project.bpm))
+    let bpm               = createFract(BigInt(project.bpm))
+    let volume            = 100
+    let transpose         = 0
+    let loopTarget        = 0
 
-    let timer = 0   // accumulated time in seconds
+    // Accumulated time tracked entirely in master project beats
+    let timer = createFract(0n)
 
-    const remaining = new Map()   // slotIndex -> beats/loops remaining
-    const triggered = new Set()   // slotIndices of one-shot jumps that have fired
+    const remaining = new Map()
+    const triggered = new Set()
 
     const events = []
     let index = 0
@@ -69,24 +112,33 @@ export function linearizeTrack(project, track) {
 
             switch (name) {
                 case 'speed':
-                    bpm = clamp(applyModifier(bpm, val, mod), 5, 20000)
+                    bpm = clampFract(applyModifierFract(bpm, numToFract(val), mod), 5, 20000)
                     break
 
                 case 'volume':
-                    volume = clamp(applyModifier(volume, val, mod), 0, 600)
-                    break
+                    volume = clamp(v => applyModifier(volume, val, mod), 0, 600)
+                    // (Using your original numeric volume flow)
+                    if (mod === '+') volume = clamp(volume + val, 0, 600)
+                        else if (mod === 'x') volume = clamp(volume * val, 0, 600)
+                            else if (mod === 'divide') volume = val <= 0 ? volume : clamp(volume / val, 0, 600)
+                                else volume = clamp(val, 0, 600)
+                                    break
 
                 case 'transpose':
-                    transpose = clamp(applyModifier(transpose, val, mod), -60, 60)
-                    break
+                    if (mod === '+') transpose = clamp(transpose + val, -60, 60)
+                        else if (mod === 'x') transpose = clamp(transpose * val, -60, 60)
+                            else if (mod === 'divide') transpose = val <= 0 ? transpose : clamp(transpose / val, -60, 60)
+                                else transpose = clamp(val, -60, 60)
+                                    break
 
                 case 'stop': {
-                    // !stop@N inserted via the actions panel acts as N beats of rest
                     const beats = remaining.has(index) ? remaining.get(index) : val
                     if (beats > 0) {
-                        timer += beatLen(bpm) * Math.min(1, beats)
+                        const stepsToTake = Math.min(1, beats)
+                        const projectBeats = mulFract(numToFract(stepsToTake), divFract(projectBpmFract, bpm))
+                        timer = addFract(timer, projectBeats)
                         remaining.set(index, Math.max(0, beats - 1))
-                        index--   // revisit next iteration
+                        index--
                     } else {
                         remaining.delete(index)
                     }
@@ -128,7 +180,6 @@ export function linearizeTrack(project, track) {
                         s.isControl && s.name === 'target' && s.value == val
                         )
                         if (targetIdx >= 0) {
-                            // Only clear loops after the landing point, not jump markers
                             for (const k of remaining.keys()) {
                                 if (k > targetIdx) remaining.delete(k)
                             }
@@ -141,8 +192,6 @@ export function linearizeTrack(project, track) {
                 case 'cut':
                     events.push({ type: 'cut', t: timer })
                     break
-
-                    // target, startpos, divider, flash, pulse, bg -- no effect on audio
             }
 
             index++
@@ -150,12 +199,13 @@ export function linearizeTrack(project, track) {
         }
 
         if (slot.isRest) {
-            timer += beatLen(bpm) * slot.duration.toDecimal()
+            const slotDur = createFract(BigInt(slot.duration.numerator), BigInt(slot.duration.denominator))
+            const projectBeats = mulFract(slotDur, divFract(projectBpmFract, bpm))
+            timer = addFract(timer, projectBeats)
             index++
             continue
         }
 
-        // Sound slot -- bake transpose and global volume into each sound
         const sounds = slot.sounds.map(s => ({
             id:     s.id,
             pitch:  clamp((s.pitch || 0) + transpose, -72, 72),
@@ -163,7 +213,10 @@ export function linearizeTrack(project, track) {
         }))
 
         events.push({ type: 'sound', t: timer, sounds })
-        timer += beatLen(bpm) * slot.duration.toDecimal()
+
+        const slotDur = createFract(BigInt(slot.duration.numerator), BigInt(slot.duration.denominator))
+        const projectBeats = mulFract(slotDur, divFract(projectBpmFract, bpm))
+        timer = addFract(timer, projectBeats)
         index++
     }
 

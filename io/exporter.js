@@ -1,8 +1,4 @@
 // Converts a Project to a flat TDW-compatible sequence string.
-//
-// Single track: existing fast path (operates directly on slot objects).
-// Multiple tracks: linearize each track into timed events, merge, then
-// re-encode into a single flat TDW sequence at a computed export BPM.
 
 import { ControlSlot } from '../model/controlslot.js'
 import { linearizeTrack } from './linearizer.js'
@@ -14,8 +10,7 @@ export function exportToTDW(project) {
     return exportMultiTrack(project)
 }
 
-// --- Single-track path (unchanged from original, just takes a slots array) ---
-
+// --- Single-track path (unchanged from original) ---
 function exportSingleTrack(project, slots) {
     const tokens       = []
     let currentStepBPM = null
@@ -73,85 +68,114 @@ function exportSingleTrack(project, slots) {
     return tokens.join('|')
 }
 
-// --- Multi-track path ---
-
+// --- Multi-track path (Rational Integer Engine) ---
 function exportMultiTrack(project) {
-    // Determine which tracks are active (solo beats mute)
     const hasSolo = project.tracks.some(t => t.solo)
     const active  = project.tracks.filter(t => hasSolo ? t.solo : !t.muted)
 
     if (active.length === 0) return ''
 
-        // Linearize each active track and merge all events
         const allEvents = active.flatMap(t => linearizeTrack(project, t))
-        allEvents.sort((a, b) => a.t - b.t)
+
+        // Sort events purely by fraction cross-multiplication
+        allEvents.sort((a, b) => {
+            const diff = a.t.n * b.t.d - b.t.n * a.t.d
+            return diff < 0n ? -1 : (diff > 0n ? 1 : 0)
+        })
 
         if (allEvents.length === 0) return ''
 
-            // Group events that are simultaneous (within floating-point epsilon)
             const groups = groupByTime(allEvents)
 
-            // Work out a step size that can represent every event boundary
-            const stepSecs  = computeStepSecs(groups)
-            const exportBPM = Math.round(Math.min(60 / stepSecs, 10000) * 1e6) / 1e6
+            const tokens        = []
+            let   currentBPM    = null
+            let   currentVolume = 100
 
-            // Build flat token list
-            const tokens        = [`!speed@${exportBPM}`]
-            let   cursorStep    = 0      // integer step count at current position
-            let   currentVolume = 100   // tracked so we only emit !volume on changes
+            for (let i = 0; i < groups.length; i++) {
+                const group     = groups[i]
+                const nextGroup = groups[i + 1]
 
-            for (const group of groups) {
-                if (group.type === 'cut') {
-                    // Fill gap then emit cut
-                    const targetStep = Math.round(group.t / stepSecs)
-                    emitPauses(tokens, targetStep - cursorStep)
-                    cursorStep = targetStep
-                    tokens.push('!cut')
-                    continue
+                let deltaBeats = { n: 0n, d: 1n }
+                if (nextGroup) {
+                    // nextGroup.t - group.t
+                    const n = nextGroup.t.n * group.t.d - group.t.n * nextGroup.t.d
+                    const d = nextGroup.t.d * group.t.d
+                    const g = gcd(n < 0n ? -n : n, d)
+                    deltaBeats = { n: n / g, d: d / g }
                 }
 
-                const targetStep = Math.round(group.t / stepSecs)
-                emitPauses(tokens, targetStep - cursorStep)
-                cursorStep = targetStep
+                let steps = 1
 
-                // Gather all sounds in this time-group
-                const allSounds = group.events.flatMap(ev => ev.sounds || [])
-                if (allSounds.length === 0) continue
+                // 1. Determine and emit optimal integer BPM based on beat fraction
+                if (nextGroup && deltaBeats.n > 0n) {
+                    const N = deltaBeats.n
+                    const D = deltaBeats.d
 
-                    // Emit sounds, inserting !combine between adjacent entries.
-                    // If a sound's effective volume differs from the current global volume,
-                    // emit !volume before it (even in the middle of a chord).
-                    for (let si = 0; si < allSounds.length; si++) {
-                        if (si > 0) tokens.push('!combine')
-
-                            const s       = allSounds[si]
-                            const vol     = Math.round(s.volume)
-                            if (vol !== currentVolume) {
-                                tokens.push(`!volume@${vol}`)
-                                currentVolume = vol
-                            }
-
-                            let token = s.id
-                            if (s.pitch !== 0) token += `@${s.pitch}`
-                                tokens.push(token)
+                    let localBPM
+                    // If projectBPM * Denominator is within the hard 10,000 max tempo limit
+                    if (BigInt(project.bpm) * D <= 10000n) {
+                        localBPM = Number(BigInt(project.bpm) * D)
+                        steps    = Number(N)
+                    } else {
+                        // Out of range polyrhythm: lock to maximum speed and calculate required pauses
+                        localBPM = 10000
+                        const num = 10000n * N
+                        const den = BigInt(project.bpm) * D
+                        steps = Number((num + den / 2n) / den) // Integer rounding
+                        if (steps < 1) steps = 1
                     }
 
-                    cursorStep++
+                    if (localBPM !== currentBPM) {
+                        tokens.push(`!speed@${localBPM}`)
+                        currentBPM = localBPM
+                    }
+                } else if (currentBPM === null) {
+                    tokens.push(`!speed@${project.bpm}`)
+                    currentBPM = project.bpm
+                }
+
+                // 2. Emit the current group's content
+                if (group.type === 'cut') {
+                    tokens.push('!cut')
+                } else {
+                    const allSounds = group.events.flatMap(ev => ev.sounds || [])
+                    if (allSounds.length > 0) {
+                        for (let si = 0; si < allSounds.length; si++) {
+                            if (si > 0) tokens.push('!combine')
+
+                                const s       = allSounds[si]
+                                const vol     = Math.round(s.volume)
+                                if (vol !== currentVolume) {
+                                    tokens.push(`!volume@${vol}`)
+                                    currentVolume = vol
+                                }
+
+                                let token = s.id
+                                if (s.pitch !== 0) token += `@${s.pitch}`
+                                    tokens.push(token)
+                        }
+                    }
+                }
+
+                // 3. Fill the trailing space using step-accurate pauses
+                if (nextGroup && deltaBeats.n > 0n) {
+                    if (steps > 1) {
+                        emitPauses(tokens, steps - 1)
+                    }
+                }
             }
 
             const raw = tokens.join('|')
-
-            // Attempt period-based recompression for repeated patterns
             return tryRecompress(tokens).join('|') || raw
 }
 
-// Group events within 1 ns of each other into one time bucket
-function groupByTime(events, eps = 1e-9) {
+// Group exact simultaneous events (Zero epsilon needed)
+function groupByTime(events) {
     const groups = []
     for (const ev of events) {
         const last = groups[groups.length - 1]
-        if (last && Math.abs(ev.t - last.t) < eps) {
-            if (ev.type === 'sound') last.events.push(ev)
+        if (last && last.type === 'sound' && ev.type === 'sound' && (ev.t.n * last.t.d === last.t.n * ev.t.d)) {
+            last.events.push(ev)
         } else {
             groups.push({
                 t:      ev.t,
@@ -163,50 +187,21 @@ function groupByTime(events, eps = 1e-9) {
     return groups
 }
 
-// Float Euclidean GCD -- finds the largest value that divides both inputs
-function floatGcd(a, b, eps = 1e-9) {
-    while (b > eps) {
+function gcd(a, b) {
+    while (b !== 0n) {
         const r = a % b
         a = b
         b = r
     }
-    return a
+    return a < 0n ? -a : a
 }
 
-// Compute the minimum step size (in seconds) that can represent all
-// inter-event intervals. Returns a sensible fallback if there's only one group.
-function computeStepSecs(groups) {
-    const soundGroups = groups.filter(g => g.type === 'sound')
-    if (soundGroups.length < 2) return 60 / 120   // default quarter at 120 BPM
-
-        // Collect all intervals between consecutive sound events
-        let step = null
-        for (let i = 1; i < soundGroups.length; i++) {
-            const interval = soundGroups[i].t - soundGroups[i - 1].t
-            if (interval < 1e-9) continue
-                step = step === null ? interval : floatGcd(step, interval)
-                if (step < 60 / 10000) break   // can't go above 10,000 BPM anyway
-        }
-
-        // Also include the offset of the first event from t=0
-        if (soundGroups[0].t > 1e-9 && step !== null) {
-            step = floatGcd(step, soundGroups[0].t)
-        }
-
-        return Math.max(step ?? (60 / 120), 60 / 10000)
-}
-
-// Push the right number of _pause tokens into the array
 function emitPauses(tokens, count) {
     if (count <= 0) return
         tokens.push(count > 1 ? `_pause=${count}` : '_pause')
 }
 
-// Try to detect whether the token sequence (minus the leading !speed) is a
-// simple N-fold repeat of a shorter period, and wrap it with !looptarget /
-// !loopmany if the saving is worthwhile.
 function tryRecompress(tokens) {
-    // Separate the leading !speed so we don't include it in the period check
     const speedIdx = tokens[0]?.startsWith('!speed') ? 1 : 0
     const body     = tokens.slice(speedIdx)
     const L        = body.length
@@ -220,24 +215,21 @@ function tryRecompress(tokens) {
             }
 
             if (match) {
-                const K       = L / P           // total repetitions
-                const savings = L - (P + 2)     // vs period + looptarget + loopmany
+                const K       = L / P
+                const savings = L - (P + 2)
                 if (savings >= 10) {
                     return [
                         ...tokens.slice(0, speedIdx),
                         '!looptarget',
                         ...body.slice(0, P),
-                        `!loopmany@${K - 1}`,   // loopmany@N means N+1 plays total
+                        `!loopmany@${K - 1}`,
                     ]
                 }
-                break   // found the minimum period but savings aren't worth it
+                break
             }
     }
-
     return tokens
 }
-
-// --- Shared helpers ---
 
 function computeStepBPM(baseBPM, duration) {
     const raw = baseBPM * duration.denominator / duration.numerator
