@@ -1,6 +1,5 @@
 // Converts a Project to a flat TDW-compatible sequence string.
 
-import { ControlSlot } from '../model/controlslot.js'
 import { linearizeTrack } from './linearizer.js'
 
 export function exportToTDW(project) {
@@ -10,7 +9,7 @@ export function exportToTDW(project) {
     return exportMultiTrack(project)
 }
 
-// --- Single-track path (unchanged from original) ---
+// --- Single-track path ---
 function exportSingleTrack(project, slots) {
     const tokens       = []
     let currentStepBPM = null
@@ -28,13 +27,7 @@ function exportSingleTrack(project, slots) {
             continue
         }
 
-        const dur     = slot.duration
-        const stepBPM = computeStepBPM(project.bpm, dur)
-
-        if (stepBPM !== currentStepBPM) {
-            tokens.push(`!speed@${stepBPM}`)
-            currentStepBPM = stepBPM
-        }
+        const dur = slot.duration
 
         if (slot.isRest) {
             let count = 1
@@ -44,23 +37,75 @@ function exportSingleTrack(project, slots) {
                 !slots[i + count].isControl &&
                 slots[i + count].duration.equals(dur)
             ) count++
-            tokens.push(count > 1 ? `_pause=${count}` : '_pause')
+
+            const totalNumerator = BigInt(dur.numerator) * BigInt(count)
+            const den = BigInt(dur.denominator)
+            const baseBPM = BigInt(project.bpm)
+            const activeBPM = BigInt(currentStepBPM || project.bpm)
+
+            const numProduct = totalNumerator * activeBPM
+            const denProduct = den * baseBPM
+
+            // If the rest duration fits perfectly into the currently active grid resolution,
+            // we can emit the pauses directly without generating an extra !speed token.
+            if (numProduct % denProduct === 0n) {
+                const steps = Number(numProduct / denProduct)
+                emitPauses(tokens, steps)
+            } else {
+                const targetBPM = project.bpm * dur.denominator
+                if (targetBPM !== currentStepBPM) {
+                    tokens.push(`!speed@${targetBPM}`)
+                    currentStepBPM = targetBPM
+                }
+                const steps = dur.numerator * count
+                emitPauses(tokens, steps)
+            }
             i += count
         } else if (slot.sounds.length === 1) {
             const soundToken = formatSound(slot.sounds[0])
-            let count = 1
-            while (
-                i + count < slots.length &&
-                !slots[i + count].isControl &&
-                !slots[i + count].isRest &&
-                slots[i + count].sounds.length === 1 &&
-                slots[i + count].duration.equals(dur) &&
-                formatSound(slots[i + count].sounds[0]) === soundToken
-            ) count++
-            tokens.push(count > 1 ? `${soundToken}=${count}` : soundToken)
-            i += count
+            const targetBPM = project.bpm * dur.denominator
+            const steps = dur.numerator
+
+            if (targetBPM !== currentStepBPM) {
+                tokens.push(`!speed@${targetBPM}`)
+                currentStepBPM = targetBPM
+            }
+
+            // If a note spans exactly 1 step, keep the standard consecutive repetition look-ahead optimization
+            if (steps === 1) {
+                let count = 1
+                while (
+                    i + count < slots.length &&
+                    !slots[i + count].isControl &&
+                    !slots[i + count].isRest &&
+                    slots[i + count].sounds.length === 1 &&
+                    slots[i + count].duration.equals(dur) &&
+                    formatSound(slots[i + count].sounds[0]) === soundToken
+                ) count++
+                tokens.push(count > 1 ? `${soundToken}=${count}` : soundToken)
+                i += count
+            } else {
+                // If it spans multiple steps (e.g. half/whole notes), emit the sound followed by trailing pauses
+                tokens.push(soundToken)
+                if (steps > 1) {
+                    emitPauses(tokens, steps - 1)
+                }
+                i++
+            }
         } else {
+            // Chords / Combined sound tokens
+            const targetBPM = project.bpm * dur.denominator
+            const steps = dur.numerator
+
+            if (targetBPM !== currentStepBPM) {
+                tokens.push(`!speed@${targetBPM}`)
+                currentStepBPM = targetBPM
+            }
+
             tokens.push(slot.sounds.map(formatSound).join('|!combine|'))
+            if (steps > 1) {
+                emitPauses(tokens, steps - 1)
+            }
             i++
         }
     }
