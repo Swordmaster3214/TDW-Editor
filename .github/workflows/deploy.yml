@@ -32,33 +32,12 @@ jobs:
         with:
           node-version: 22
 
-      - name: Restore cached sounds
-        id: cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            sounds
-            .sounds-manifest.txt
-          key: sounds-${{ runner.os }}-${{ hashFiles('.sounds-manifest.txt') }}-${{ github.run_number }}
-          restore-keys: |
-            sounds-${{ runner.os }}-${{ hashFiles('.sounds-manifest.txt') }}-
-            sounds-${{ runner.os }}-
-
       - name: Sync sounds from upstream
         id: sync
         env:
           SOUNDS_BASE_URL: https://thirtydollar.website
           CONCURRENCY: "24"
         run: node ./sync_sounds.mjs
-
-      - name: Save updated cache snapshot
-        if: steps.sync.outputs.cache_changed == 'true' || steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache@v5
-        with:
-          path: |
-            sounds
-            .sounds-manifest.txt
-          key: sounds-${{ runner.os }}-${{ hashFiles('.sounds-manifest.txt') }}-${{ github.run_number }}
 
       - name: Stage Pages artifact
         run: |
