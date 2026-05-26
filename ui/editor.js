@@ -180,7 +180,11 @@ function buildLane(track, trackIndex, isActive, cursorPos, selection) {
                     e.stopPropagation()
                     if (!slot.isControl && !slot.isRest && slot.sounds.length) {
                         for (const sound of slot.sounds) {
-                            previewSound(resolveAudioId(sound.id), { pitch: sound.pitch })
+                            previewSound(resolveAudioId(sound.id), {
+                                pitch:  sound.pitch,
+                                volume: sound.volume ?? 100,
+                                pan:    sound.panning,
+                            })
                         }
                     }
                 })
@@ -286,7 +290,8 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
             if (sound.panning !== undefined && sound.panning !== 0) {
                 const panBadge = document.createElement('span')
                 panBadge.className = 'seq-panning-badge'
-                panBadge.textContent = sound.panning < 0 ? `←${Math.abs(sound.panning)}` : `${sound.panning}→`
+                const displayPan = sound.panning / 10
+                panBadge.textContent = displayPan < 0 ? `◀${Math.abs(displayPan)}` : `${displayPan}▶`
                 wrap.appendChild(panBadge)
             }
 
@@ -318,6 +323,11 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
                         if (e.altKey) step = 1
                             const delta = e.deltaY < 0 ? step : -step
                             App.adjustVolume(index, si, delta)
+                            previewSound(resolveAudioId(sound.id), {
+                                pitch:  sound.pitch,
+                                volume: sound.volume ?? 100,
+                                pan:    sound.panning,
+                            })
                 } else {
                     // Adjust Pitch Override
                     let step = 1
@@ -325,7 +335,11 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
                         if (e.altKey) step = 1
                             const delta = e.deltaY < 0 ? step : -step
                             App.adjustPitch(index, si, delta)
-                            previewSound(resolveAudioId(sound.id), { pitch: sound.pitch })
+                            previewSound(resolveAudioId(sound.id), {
+                                pitch:  sound.pitch,
+                                volume: sound.volume ?? 100,
+                                pan:    sound.panning,
+                            })
                 }
             }, { passive: false })
 
@@ -365,6 +379,15 @@ function onKeyDown(e) {
                     const delta = e.key === 'ArrowRight' ? step : -step
                     const slotIdx = App.state.cursorPos - 1
                     App.adjustPanning(slotIdx, 0, delta)
+                    const panSlot = App.activeTrack().slots[slotIdx]
+                    if (panSlot && !panSlot.isRest && !panSlot.isControl && panSlot.sounds[0]) {
+                        const s = panSlot.sounds[0]
+                        previewSound(resolveAudioId(s.id), {
+                            pitch:  s.pitch,
+                            volume: s.volume ?? 100,
+                            pan:    s.panning,
+                        })
+                    }
                     return
         }
 
@@ -393,7 +416,11 @@ function onKeyDown(e) {
             const slot = App.activeTrack().slots[slotIdx]
             if (slot && !slot.isRest && !slot.isControl && slot.sounds[0]) {
                 const s = slot.sounds[0]
-                previewSound(resolveAudioId(s.id), { pitch: s.pitch })
+                previewSound(resolveAudioId(s.id), {
+                    pitch:  s.pitch,
+                    volume: s.volume ?? 100,
+                    pan:    s.panning,
+                })
             }
             return
         }

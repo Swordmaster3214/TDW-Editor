@@ -217,9 +217,9 @@ export function pasteAtCursor() {
 export function adjustPitch(slotIndex, soundIndex, delta) {
     const sound = activeTrack().slots[slotIndex]?.sounds[soundIndex]
     if (!sound) return
-        snapshot()
-        sound.pitch = Math.max(-24, Math.min(24, sound.pitch + delta))
-        notify()
+    snapshot()
+    sound.pitch = Math.max(-60, Math.min(60, sound.pitch + delta))
+    notify()
 }
 
 // -- Volume / Panning editing --
@@ -227,18 +227,18 @@ export function adjustPitch(slotIndex, soundIndex, delta) {
 export function adjustVolume(slotIndex, soundIndex, delta) {
     const sound = activeTrack().slots[slotIndex]?.sounds[soundIndex]
     if (!sound) return
-        snapshot()
-        if (sound.volume === null) sound.volume = 100
-            sound.volume = Math.max(0, Math.min(100, sound.volume + delta))
-            notify()
+    snapshot()
+    if (sound.volume === null) sound.volume = 100
+    sound.volume = Math.max(0, Math.min(200, sound.volume + delta))
+    notify()
 }
 
 export function adjustPanning(slotIndex, soundIndex, delta) {
     const sound = activeTrack().slots[slotIndex]?.sounds[soundIndex]
     if (!sound) return
-        snapshot()
-        sound.panning = Math.max(-10, Math.min(10, sound.panning + delta))
-        notify()
+    snapshot()
+    sound.panning = Math.max(-100, Math.min(100, sound.panning + delta * 10))
+    notify()
 }
 
 // -- Track management --

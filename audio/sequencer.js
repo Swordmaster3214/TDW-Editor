@@ -168,7 +168,9 @@ function buildTrackSchedule(project, track, trackIndex) {
             continue
         }
 
-        // Sound slot
+        // Sound slot -- volume is track-level * per-sound override,
+        // panning comes straight from the sound (already in -100..100 range,
+        // engine's StereoPanner divides by 100 to get -1..1).
         for (const sound of slot.sounds) {
             const audioId = resolveAudioId(sound.id)
             soundIds.add(audioId)
@@ -180,7 +182,7 @@ function buildTrackSchedule(project, track, trackIndex) {
                 time:       timer,
                 pitch:      clamp((sound.pitch || 0) + transposition, -72, 72),
                         volume:     volume * clamp(perVol / 100, 0, 4),
-                        pan:        0,
+                        pan:        sound.panning ?? 0,
                         slotIndex:  index,
                         trackIndex,
             })

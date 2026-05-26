@@ -188,8 +188,8 @@ function exportMultiTrack(project) {
                         for (let si = 0; si < allSounds.length; si++) {
                             if (si > 0) tokens.push('!combine')
 
-                                const s       = allSounds[si]
-                                const vol     = Math.round(s.volume)
+                                const s   = allSounds[si]
+                                const vol = Math.round(s.volume)
                                 if (vol !== currentVolume) {
                                     tokens.push(`!volume@${vol}`)
                                     currentVolume = vol
@@ -276,13 +276,13 @@ function tryRecompress(tokens) {
     return tokens
 }
 
-function computeStepBPM(baseBPM, duration) {
-    const raw = baseBPM * duration.denominator / duration.numerator
-    return Math.round(raw * 1e6) / 1e6
-}
-
+// Serializes a Sound back to its TDW token.
+// Pitch goes after @, per-sound volume after %, panning after ^.
+// Only emits a modifier if it differs from the default (pitch 0, volume null/100, panning 0).
 function formatSound(sound) {
     let token = sound.id
     if (sound.pitch !== 0) token += `@${sound.pitch}`
-        return token
+        if (sound.volume !== null && sound.volume !== 100) token += `%${sound.volume}`
+            if (sound.panning !== 0) token += `^${sound.panning}`
+                return token
 }

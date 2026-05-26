@@ -23,7 +23,7 @@ export function importFromTDW(text) {
     let pendingCombine  = false
 
     for (const token of tokens) {
-        const { id, value, modifier } = splitToken(token)
+        const { id, value, modifier } = splitControlToken(token)
 
         // -- Rests --
         if (id === '_pause') {
@@ -76,7 +76,9 @@ export function importFromTDW(text) {
         }
 
         // -- Regular sound --
-        const sound = new Sound({ id, pitch: parseFloat(value) || 0 })
+        // Parse the full token for pitch (@), volume (%), and panning (^)
+        const { id: soundId, pitch, volume, panning } = parseSoundToken(token)
+        const sound = new Sound({ id: soundId, pitch, volume, panning })
 
         if (pendingCombine && slots.length > 0) {
             const prev = slots[slots.length - 1]
@@ -104,11 +106,27 @@ function expandRepeat(token) {
         return Array.from({ length: parseInt(n, 10) }, () => base)
 }
 
-function splitToken(token) {
+// Used only for control tokens (!speed@120@+, etc.) which use @ as their
+// separator. Sound tokens go through parseSoundToken instead.
+function splitControlToken(token) {
     const parts = token.split('@')
     return {
         id:       parts[0],
         value:    parts[1] ?? null,
         modifier: parts[2] ?? null,
+    }
+}
+
+// Parses a sound token in the format: id[@pitch][%volume][^panning]
+// All three modifiers are optional and independent.
+// Examples: kick | boom@4 | ding@-3%80 | snare@0%106^-50 | hi@2%200^100
+function parseSoundToken(token) {
+    const match = token.match(/^([^@%^]+)(?:@([-\d.]+))?(?:%([\d.]+))?(?:\^([-\d]+))?$/)
+    if (!match) return { id: token, pitch: 0, volume: null, panning: 0 }
+    return {
+        id:      match[1],
+        pitch:   match[2] !== undefined ? parseFloat(match[2]) : 0,
+        volume:  match[3] !== undefined ? parseFloat(match[3]) : null,
+        panning: match[4] !== undefined ? parseInt(match[4], 10) : 0,
     }
 }
