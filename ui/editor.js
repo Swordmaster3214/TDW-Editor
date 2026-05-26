@@ -245,8 +245,8 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
         const token     = slot.toTDWToken()
         const valuePart = token.slice(slot.name.length + 1)
         if (valuePart) {
-            const badge = document.createElement('sub')
-            badge.className   = 'seq-dur'
+            const badge = document.createElement('span')
+            badge.className   = 'seq-main-val'
             badge.textContent = valuePart
             el.appendChild(badge)
         }
@@ -279,12 +279,29 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
             img.src   = soundInfo?.imageLink ?? `https://thirtydollar.website/icons/${sound.id}.png`
             img.alt   = soundInfo?.name ?? sound.id
             img.className = 'seq-icon'
-            img.loading = 'lazy'  // Lazy-load images in the editor
+            img.loading = 'lazy'
             wrap.appendChild(img)
 
+            // Panning Indicator Badge (Top Left)
+            if (sound.panning !== undefined && sound.panning !== 0) {
+                const panBadge = document.createElement('span')
+                panBadge.className = 'seq-panning-badge'
+                panBadge.textContent = sound.panning < 0 ? `←${Math.abs(sound.panning)}` : `${sound.panning}→`
+                wrap.appendChild(panBadge)
+            }
+
+            // Volume Indicator Badge (Top Right)
+            if (sound.volume !== null && sound.volume !== 100) {
+                const volBadge = document.createElement('span')
+                volBadge.className = 'seq-volume-badge'
+                volBadge.textContent = `${sound.volume}%`
+                wrap.appendChild(volBadge)
+            }
+
+            // Pitch Indicator Badge (Bottom Center)
             if (sound.pitch !== 0) {
-                const badge = document.createElement('sup')
-                badge.className   = 'seq-pitch'
+                const badge = document.createElement('span')
+                badge.className   = 'seq-main-val'
                 badge.textContent = (sound.pitch > 0 ? '+' : '') + sound.pitch
                 wrap.appendChild(badge)
             }
@@ -292,9 +309,24 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
             wrap.addEventListener('wheel', e => {
                 e.preventDefault()
                 e.stopPropagation()
-                const delta = e.deltaY < 0 ? 1 : -1
-                App.adjustPitch(index, si, delta)
-                previewSound(resolveAudioId(sound.id), { pitch: sound.pitch })
+                const isCtrl = e.ctrlKey || e.metaKey
+
+                if (isCtrl) {
+                    // Adjust Volume Override
+                    let step = 2
+                    if (e.shiftKey) step = 10
+                        if (e.altKey) step = 1
+                            const delta = e.deltaY < 0 ? step : -step
+                            App.adjustVolume(index, si, delta)
+                } else {
+                    // Adjust Pitch Override
+                    let step = 1
+                    if (e.shiftKey) step = 12
+                        if (e.altKey) step = 1
+                            const delta = e.deltaY < 0 ? step : -step
+                            App.adjustPitch(index, si, delta)
+                            previewSound(resolveAudioId(sound.id), { pitch: sound.pitch })
+                }
             }, { passive: false })
 
             el.appendChild(wrap)
@@ -313,10 +345,28 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
 // -- Keyboard handling --
 
 function onKeyDown(e) {
-    // Don't steal keystrokes when the user is typing in an input (e.g. track name)
     if (e.target.tagName === 'INPUT') return
 
         const ctrl = e.ctrlKey || e.metaKey
+
+        // Ctrl + X: Create Stop Action
+        if (ctrl && e.key.toLowerCase() === 'x') {
+            e.preventDefault()
+            App.insertControl('stop')
+            return
+        }
+
+        // Ctrl + Left/Right Arrow Keys: Adjust Panning
+        if (ctrl && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+            e.preventDefault()
+            let step = 1
+            if (e.shiftKey) step = 3
+                if (e.altKey) step = 1
+                    const delta = e.key === 'ArrowRight' ? step : -step
+                    const slotIdx = App.state.cursorPos - 1
+                    App.adjustPanning(slotIdx, 0, delta)
+                    return
+        }
 
         if (e.key === 'ArrowLeft'  && !e.shiftKey) { e.preventDefault(); App.moveCursor(-1); return }
         if (e.key === 'ArrowRight' && !e.shiftKey) { e.preventDefault(); App.moveCursor(+1); return }
@@ -359,6 +409,5 @@ function onKeyDown(e) {
 }
 
 function onContainerClick() {
-    // Clicking dead space in the container (between lanes) focuses it
     seqWrapElement.focus()
 }

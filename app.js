@@ -222,6 +222,25 @@ export function adjustPitch(slotIndex, soundIndex, delta) {
         notify()
 }
 
+// -- Volume / Panning editing --
+
+export function adjustVolume(slotIndex, soundIndex, delta) {
+    const sound = activeTrack().slots[slotIndex]?.sounds[soundIndex]
+    if (!sound) return
+        snapshot()
+        if (sound.volume === null) sound.volume = 100
+            sound.volume = Math.max(0, Math.min(100, sound.volume + delta))
+            notify()
+}
+
+export function adjustPanning(slotIndex, soundIndex, delta) {
+    const sound = activeTrack().slots[slotIndex]?.sounds[soundIndex]
+    if (!sound) return
+        snapshot()
+        sound.panning = Math.max(-10, Math.min(10, sound.panning + delta))
+        notify()
+}
+
 // -- Track management --
 
 export function setActiveTrack(index) {
