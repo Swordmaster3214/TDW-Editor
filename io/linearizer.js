@@ -116,12 +116,10 @@ export function linearizeTrack(project, track) {
                     break
 
                 case 'volume':
-                    volume = clamp(v => applyModifier(volume, val, mod), 0, 600)
-                    // (Using your original numeric volume flow)
-                    if (mod === '+') volume = clamp(volume + val, 0, 600)
-                        else if (mod === 'x') volume = clamp(volume * val, 0, 600)
-                            else if (mod === 'divide') volume = val <= 0 ? volume : clamp(volume / val, 0, 600)
-                                else volume = clamp(val, 0, 600)
+                    if (mod === '+') volume = clamp(volume + val, 0, 400)
+                        else if (mod === 'x') volume = clamp(volume * val, 0, 400)
+                            else if (mod === 'divide') volume = val <= 0 ? volume : clamp(volume / val, 0, 400)
+                                else volume = clamp(val, 0, 400)
                                     break
 
                 case 'transpose':
@@ -209,7 +207,7 @@ export function linearizeTrack(project, track) {
         const sounds = slot.sounds.map(s => ({
             id:     s.id,
             pitch:  clamp((s.pitch || 0) + transpose, -72, 72),
-                                             volume: clamp((s.volume ?? 100) * volume / 100, 0, 600),
+                                             volume: clamp((s.volume ?? 100) * volume / 100, 0, 400),
         }))
 
         events.push({ type: 'sound', t: timer, sounds })

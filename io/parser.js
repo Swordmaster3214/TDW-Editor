@@ -61,15 +61,29 @@ export function importFromTDW(text) {
                     continue
             }
 
-            // Everything else (including subsequent !speed changes) becomes a ControlSlot
-            const parsedValue = (value === null) ? null : (isNaN(+value) ? value : +value)
-            const action      = ACTION_BY_NAME[name]
-            const isValue2    = action?.twoValues && modifier !== null
+            // Two-value actions (!pulse, !bg) use a comma inside the value segment:
+            // !pulse@1,2  ->  value='1,2', no modifier segment
+            // Split on comma before deciding what goes in value vs value2.
+            let rawValue  = value
+            let rawValue2 = null
+            if (value !== null && value.includes(',')) {
+                const comma = value.indexOf(',')
+                rawValue  = value.slice(0, comma)
+                rawValue2 = value.slice(comma + 1)
+            }
+
+            const parsedValue  = rawValue  === null ? null : (isNaN(+rawValue)  ? rawValue  : +rawValue)
+            const parsedValue2 = rawValue2 === null ? null : (isNaN(+rawValue2) ? rawValue2 : +rawValue2)
+
+            // Fall back to the old @-based value2 detection for any edge cases
+            const action   = ACTION_BY_NAME[name]
+            const isValue2 = action?.twoValues && (parsedValue2 !== null || modifier !== null)
+
             slots.push(new ControlSlot({
                 name,
                 value:    parsedValue,
                 modifier: isValue2 ? null : (modifier || null),
-                                       value2:   isValue2 ? (isNaN(+modifier) ? modifier : +modifier) : null,
+                                       value2:   isValue2 ? (parsedValue2 ?? (isNaN(+modifier) ? modifier : +modifier)) : null,
             }))
             pendingCombine = false
             continue

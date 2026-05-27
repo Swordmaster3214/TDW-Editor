@@ -112,16 +112,26 @@ export function setSelection(start, end) {
 }
 
 export function extendSelection(delta) {
-    const anchor  = state.selection?.anchor ?? state.cursorPos
-    const focus   = (state.selection?.focus  ?? state.cursorPos) + delta
-    const clamped = Math.max(0, Math.min(focus, activeTrack().slots.length - 1))
-    state.selection = {
-        anchor,
-        focus:  clamped,
-        start:  Math.min(anchor, clamped),
-        end:    Math.max(anchor, clamped),
+    const anchor = state.selection?.anchor ?? state.cursorPos
+    const focus  = Math.max(0, Math.min(
+        (state.selection?.focus ?? state.cursorPos) + delta,
+                                        activeTrack().slots.length
+    ))
+
+    if (anchor === focus) {
+        // Collapsed back to a cursor -- no selection
+        state.selection = null
+    } else {
+        const lo = Math.min(anchor, focus)
+        const hi = Math.max(anchor, focus)
+        state.selection = {
+            anchor,
+            focus,
+            start: lo,      // first selected slot index
+            end:   hi - 1,  // last selected slot index (cursor pos hi is *after* slot hi-1)
+        }
     }
-    state.cursorPos = clamped + (delta > 0 ? 1 : 0)
+    state.cursorPos = focus
     notify()
 }
 
@@ -229,7 +239,7 @@ export function adjustVolume(slotIndex, soundIndex, delta) {
     if (!sound) return
     snapshot()
     if (sound.volume === null) sound.volume = 100
-    sound.volume = Math.max(0, Math.min(200, sound.volume + delta))
+    sound.volume = Math.max(0, Math.min(400, sound.volume + delta))
     notify()
 }
 

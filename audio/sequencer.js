@@ -82,7 +82,7 @@ function buildTrackSchedule(project, track, trackIndex) {
                     break
 
                 case 'volume':
-                    volume = +clamp(applyModifier(volume, val, mod), 0, 600).toFixed(4)
+                    volume = +clamp(applyModifier(volume, val, mod), 0, 400).toFixed(4)
                     break
 
                 case 'transpose':

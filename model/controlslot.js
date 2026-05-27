@@ -6,7 +6,7 @@
 export const ACTIONS = [
     // Group 1: Timing and dynamics
     { shortcut: 't', action: 'Set tempo',          name: 'speed',     hasValue: true,  modifiers: true,  default: 300,    set: [10, 10000],      add: [-10000, 10000],     multiply: [0.01, 1000, 0.1], divide: [0.1, 100, 0.1] },
-{ shortcut: 'v', action: 'Set volume',          name: 'volume',    hasValue: true,  modifiers: true,  default: 100,    set: [0, 600, 1, '%'], add: [-600, 600, 1, '%'], multiply: [0.01, 1000, 0.1], divide: [0.1, 100, 0.1] },
+{ shortcut: 'v', action: 'Set volume',          name: 'volume',    hasValue: true,  modifiers: true,  default: 100,    set: [0, 400, 1, '%'], add: [-400, 400, 1, '%'], multiply: [0.01, 1000, 0.1], divide: [0.1, 100, 0.1] },
 { shortcut: 'p', action: 'Pause for duration',  name: 'stop',      hasValue: true,  modifiers: false, default: 4,      set: [0, 1000] },
 { shortcut: 'm', action: 'Transpose',           name: 'transpose', hasValue: true,  modifiers: true,  default: 1,      set: [-60, 60],        add: [-60, 60] },
 
@@ -51,9 +51,9 @@ export class ControlSlot {
     toTDWToken() {
         if (this.value === null) return `!${this.name}`
 
-            // Two-value items like pulse and bg: !name@v1@v2 (v2 occupies the modifier slot)
+            // Two-value items like pulse and bg use a comma: !pulse@1,2  !bg@ff0000,1
             if (this.value2 !== null) {
-                return `!${this.name}@${this.value}@${this.value2}`
+                return `!${this.name}@${this.value},${this.value2}`
             }
 
             // Single value with optional modifier
