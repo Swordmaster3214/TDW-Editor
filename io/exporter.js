@@ -13,6 +13,7 @@ export function exportToTDW(project) {
 function exportSingleTrack(project, slots) {
     const tokens       = []
     let currentStepBPM = null
+    let effectiveBaseBPM = project.bpm  // Track the current effective base BPM for calculations
 
     let i = 0
     while (i < slots.length) {
@@ -22,6 +23,7 @@ function exportSingleTrack(project, slots) {
             tokens.push(slot.toTDWToken())
             if (slot.name === 'speed' && slot.value !== null && slot.modifier === null) {
                 currentStepBPM = slot.value
+                effectiveBaseBPM = slot.value  // Update the base BPM for subsequent calculations
             }
             i++
             continue
@@ -40,8 +42,8 @@ function exportSingleTrack(project, slots) {
 
             const totalNumerator = BigInt(dur.numerator) * BigInt(count)
             const den = BigInt(dur.denominator)
-            const baseBPM = BigInt(project.bpm)
-            const activeBPM = BigInt(currentStepBPM || project.bpm)
+            const baseBPM = BigInt(effectiveBaseBPM)
+            const activeBPM = BigInt(currentStepBPM || effectiveBaseBPM)
 
             const numProduct = totalNumerator * activeBPM
             const denProduct = den * baseBPM
@@ -52,7 +54,7 @@ function exportSingleTrack(project, slots) {
                 const steps = Number(numProduct / denProduct)
                 emitPauses(tokens, steps)
             } else {
-                const targetBPM = project.bpm * dur.denominator
+                const targetBPM = effectiveBaseBPM * dur.denominator
                 if (targetBPM !== currentStepBPM) {
                     tokens.push(`!speed@${targetBPM}`)
                     currentStepBPM = targetBPM
@@ -63,7 +65,7 @@ function exportSingleTrack(project, slots) {
             i += count
         } else if (slot.sounds.length === 1) {
             const soundToken = formatSound(slot.sounds[0])
-            const targetBPM = project.bpm * dur.denominator
+            const targetBPM = effectiveBaseBPM * dur.denominator
             const steps = dur.numerator
 
             if (targetBPM !== currentStepBPM) {
@@ -94,7 +96,7 @@ function exportSingleTrack(project, slots) {
             }
         } else {
             // Chords / Combined sound tokens
-            const targetBPM = project.bpm * dur.denominator
+            const targetBPM = effectiveBaseBPM * dur.denominator
             const steps = dur.numerator
 
             if (targetBPM !== currentStepBPM) {
