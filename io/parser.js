@@ -57,8 +57,6 @@ export function importFromTDW(text) {
                 const parsed = parseFloat(value)
                 if (!isNaN(parsed)) bpm = parsed
                     foundFirstSpeed = true
-                    pendingCombine  = false
-                    continue
             }
 
             // Two-value actions (!pulse, !bg) use a comma inside the value segment:

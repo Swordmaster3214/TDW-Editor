@@ -15,6 +15,9 @@ const playedSlots = new Map()
 // Cache the seq-wrap element to avoid repeated queries
 let seqWrapElement = null
 
+// Track the currently hovered sound element for hover-based editing
+let hoveredSoundWrap = null
+
 export function init(container) {
     seqWrapElement = container
     container.setAttribute('tabindex', '0')
@@ -40,6 +43,48 @@ export function init(container) {
     })
 
     render(container)
+}
+
+// Switch the sidebar to the actions tab
+function switchToActionsTab() {
+    const sidebarTabs = document.getElementById('sidebar-tabs')
+    if (!sidebarTabs) return
+
+        const actionTabBtn = sidebarTabs.querySelector('[data-tab="actions-panel"]')
+        if (!actionTabBtn) return
+
+            // Remove active class from all tab buttons
+            sidebarTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'))
+            // Hide all tab panels
+            document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none')
+
+            // Activate the actions tab
+            actionTabBtn.classList.add('active')
+            const actionPanel = document.getElementById('actions-panel')
+            if (actionPanel) actionPanel.style.display = 'flex'
+}
+
+// Helper to get track index, slot index, and sound index from a hovered sound wrap element
+function getIndicesFromElement(el) {
+    if (!el) return null
+
+        const soundWrap = el.closest('.seq-sound-wrap')
+        if (!soundWrap) return null
+
+            const slot = soundWrap.closest('[data-index]')
+            if (!slot) return null
+
+                const lane = slot.closest('[data-track]')
+                if (!lane) return null
+
+                    const trackIndex = parseInt(lane.dataset.track, 10)
+                    const slotIndex = parseInt(slot.dataset.index, 10)
+
+                    // Count which sound this is within the slot (for chords)
+                    const soundWraps = Array.from(slot.querySelectorAll('.seq-sound-wrap'))
+                    const soundIndex = soundWraps.indexOf(soundWrap)
+
+                    return { trackIndex, slotIndex, soundIndex }
 }
 
 // -- Rendering --
@@ -311,10 +356,30 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
                 wrap.appendChild(badge)
             }
 
+            // Track hover state for editing
+            wrap.addEventListener('mouseenter', () => {
+                hoveredSoundWrap = wrap
+            })
+            wrap.addEventListener('mouseleave', () => {
+                hoveredSoundWrap = null
+            })
+
             wrap.addEventListener('wheel', e => {
                 e.preventDefault()
                 e.stopPropagation()
                 const isCtrl = e.ctrlKey || e.metaKey
+
+                // Use hovered element if available, otherwise fall back to cursor position
+                let editSlotIndex = index
+                let editSoundIndex = si
+
+                if (hoveredSoundWrap) {
+                    const indices = getIndicesFromElement(hoveredSoundWrap)
+                    if (indices) {
+                        editSlotIndex = indices.slotIndex
+                        editSoundIndex = indices.soundIndex
+                    }
+                }
 
                 if (isCtrl) {
                     // Adjust Volume Override
@@ -322,24 +387,30 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
                     if (e.shiftKey) step = 10
                         if (e.altKey) step = 1
                             const delta = e.deltaY < 0 ? step : -step
-                            App.adjustVolume(index, si, delta)
-                            previewSound(resolveAudioId(sound.id), {
-                                pitch:  sound.pitch,
-                                volume: sound.volume ?? 100,
-                                pan:    sound.panning,
-                            })
+                            App.adjustVolume(editSlotIndex, editSoundIndex, delta)
+                            const editSound = App.state.project.tracks[App.state.activeTrackIndex].slots[editSlotIndex]?.sounds[editSoundIndex]
+                            if (editSound) {
+                                previewSound(resolveAudioId(editSound.id), {
+                                    pitch:  editSound.pitch,
+                                    volume: editSound.volume ?? 100,
+                                    pan:    editSound.panning,
+                                })
+                            }
                 } else {
                     // Adjust Pitch Override
                     let step = 1
                     if (e.shiftKey) step = 12
                         if (e.altKey) step = 1
                             const delta = e.deltaY < 0 ? step : -step
-                            App.adjustPitch(index, si, delta)
-                            previewSound(resolveAudioId(sound.id), {
-                                pitch:  sound.pitch,
-                                volume: sound.volume ?? 100,
-                                pan:    sound.panning,
-                            })
+                            App.adjustPitch(editSlotIndex, editSoundIndex, delta)
+                            const editSound = App.state.project.tracks[App.state.activeTrackIndex].slots[editSlotIndex]?.sounds[editSoundIndex]
+                            if (editSound) {
+                                previewSound(resolveAudioId(editSound.id), {
+                                    pitch:  editSound.pitch,
+                                    volume: editSound.volume ?? 100,
+                                    pan:    editSound.panning,
+                                })
+                            }
                 }
             }, { passive: false })
 
@@ -377,11 +448,23 @@ function onKeyDown(e) {
             if (e.shiftKey) step = 3
                 if (e.altKey) step = 1
                     const delta = e.key === 'ArrowRight' ? step : -step
-                    const slotIdx = App.state.cursorPos - 1
-                    App.adjustPanning(slotIdx, 0, delta)
-                    const panSlot = App.activeTrack().slots[slotIdx]
-                    if (panSlot && !panSlot.isRest && !panSlot.isControl && panSlot.sounds[0]) {
-                        const s = panSlot.sounds[0]
+
+                    let editSlotIndex = App.state.cursorPos - 1
+                    let editSoundIndex = 0
+
+                    // Use hovered element if available
+                    if (hoveredSoundWrap) {
+                        const indices = getIndicesFromElement(hoveredSoundWrap)
+                        if (indices && indices.trackIndex === App.state.activeTrackIndex) {
+                            editSlotIndex = indices.slotIndex
+                            editSoundIndex = indices.soundIndex
+                        }
+                    }
+
+                    App.adjustPanning(editSlotIndex, editSoundIndex, delta)
+                    const panSlot = App.activeTrack().slots[editSlotIndex]
+                    if (panSlot && !panSlot.isRest && !panSlot.isControl && panSlot.sounds[editSoundIndex]) {
+                        const s = panSlot.sounds[editSoundIndex]
                         previewSound(resolveAudioId(s.id), {
                             pitch:  s.pitch,
                             volume: s.volume ?? 100,
@@ -411,11 +494,23 @@ function onKeyDown(e) {
         if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
             e.preventDefault()
             const delta   = e.key === 'ArrowUp' ? 1 : -1
-            const slotIdx = App.state.cursorPos - 1
-            App.adjustPitch(slotIdx, 0, delta)
-            const slot = App.activeTrack().slots[slotIdx]
-            if (slot && !slot.isRest && !slot.isControl && slot.sounds[0]) {
-                const s = slot.sounds[0]
+
+            let editSlotIndex = App.state.cursorPos - 1
+            let editSoundIndex = 0
+
+            // Use hovered element if available
+            if (hoveredSoundWrap) {
+                const indices = getIndicesFromElement(hoveredSoundWrap)
+                if (indices && indices.trackIndex === App.state.activeTrackIndex) {
+                    editSlotIndex = indices.slotIndex
+                    editSoundIndex = indices.soundIndex
+                }
+            }
+
+            App.adjustPitch(editSlotIndex, editSoundIndex, delta)
+            const slot = App.activeTrack().slots[editSlotIndex]
+            if (slot && !slot.isRest && !slot.isControl && slot.sounds[editSoundIndex]) {
+                const s = slot.sounds[editSoundIndex]
                 previewSound(resolveAudioId(s.id), {
                     pitch:  s.pitch,
                     volume: s.volume ?? 100,
@@ -430,7 +525,11 @@ function onKeyDown(e) {
             const action = ACTION_BY_KEY[e.key.toLowerCase()]
             if (action) {
                 e.preventDefault()
-                handleActionClick(action, document.querySelector(`.action-btn[data-name="${action.name}"]`))
+
+                // Switch to actions tab when an action shortcut is used
+                switchToActionsTab()
+
+                    handleActionClick(action, document.querySelector(`.action-btn[data-name="${action.name}"]`))
             }
         }
 }
