@@ -6,7 +6,7 @@ import { Track }       from './model/track.js'
 import { Slot }        from './model/slot.js'
 import { Sound }       from './model/sound.js'
 import { Fraction }    from './model/fraction.js'
-import { ControlSlot } from './model/controlslot.js'
+import { ControlSlot, ACTIONS } from './model/controlslot.js'
 
 export const state = {
     project:          new Project(),
@@ -152,6 +152,7 @@ export function insertSlot(slot) {
 }
 
 export function insertSound(soundId) {
+    if (soundId === '_pause') { insertRest(); return }
     insertSlot(new Slot({ sounds: [new Sound({ id: soundId, pitch: 0 })], duration: state.activeDur }))
 }
 
@@ -227,9 +228,48 @@ export function pasteAtCursor() {
 export function adjustPitch(slotIndex, soundIndex, delta) {
     const sound = activeTrack().slots[slotIndex]?.sounds[soundIndex]
     if (!sound) return
-    snapshot()
-    sound.pitch = Math.max(-60, Math.min(60, sound.pitch + delta))
-    notify()
+        snapshot()
+        sound.pitch = Math.max(-60, Math.min(60, sound.pitch + delta))
+        notify()
+}
+
+// -- Control slot value editing --
+
+export function adjustControlValue(slotIndex, delta) {
+    const slot = activeTrack().slots[slotIndex]
+    if (!slot || !slot.isControl) return
+
+        snapshot()
+        const action = ACTIONS.find(a => a.name === slot.name)
+        if (!action || !action.hasValue || slot.value === null) return
+
+            // Get the valid range for this control based on the current modifier
+            const spec = slot.modifier === '+' ? action.add
+            : slot.modifier === 'x' ? action.multiply
+            : slot.modifier === 'divide' ? action.divide
+            : action.set
+
+            if (!spec) return
+
+                const [min, max, step = 1] = spec
+                const increment = delta > 0 ? step : -step
+                slot.value = Math.max(min, Math.min(max, slot.value + increment))
+                notify()
+}
+
+export function adjustControlValue2(slotIndex, delta) {
+    const slot = activeTrack().slots[slotIndex]
+    if (!slot || !slot.isControl || slot.value2 === null) return
+
+        snapshot()
+        const action = ACTIONS.find(a => a.name === slot.name)
+        if (!action?.twoValues) return
+
+            const [, spec2] = action.twoValues
+            const [min, max, step = 1] = spec2
+            const increment = delta > 0 ? step : -step
+            slot.value2 = Math.max(min, Math.min(max, slot.value2 + increment))
+            notify()
 }
 
 // -- Volume / Panning editing --
@@ -237,18 +277,18 @@ export function adjustPitch(slotIndex, soundIndex, delta) {
 export function adjustVolume(slotIndex, soundIndex, delta) {
     const sound = activeTrack().slots[slotIndex]?.sounds[soundIndex]
     if (!sound) return
-    snapshot()
-    if (sound.volume === null) sound.volume = 100
-    sound.volume = Math.max(0, Math.min(400, sound.volume + delta))
-    notify()
+        snapshot()
+        if (sound.volume === null) sound.volume = 100
+            sound.volume = Math.max(0, Math.min(400, sound.volume + delta))
+            notify()
 }
 
 export function adjustPanning(slotIndex, soundIndex, delta) {
     const sound = activeTrack().slots[slotIndex]?.sounds[soundIndex]
     if (!sound) return
-    snapshot()
-    sound.panning = Math.max(-100, Math.min(100, sound.panning + delta * 10))
-    notify()
+        snapshot()
+        sound.panning = Math.max(-100, Math.min(100, sound.panning + delta * 10))
+        notify()
 }
 
 // -- Track management --

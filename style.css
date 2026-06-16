@@ -426,10 +426,7 @@ position: relative;
 .seq-rest {
     border-color: var(--rest);
     color: var(--rest);
-    font-family: var(--font-mono);
-    font-size: 1.4em;
     padding: 0;
-    text-align: center;
     width: 100%;
 }
 
@@ -516,6 +513,9 @@ position: relative;
     vertical-align: middle;
     flex-shrink: 0;
     margin: 0 0.15em;
+}
+#seq-wrap:not(:focus-within) .seq-cursor {
+display: none;
 }
 @keyframes blink { 0%, 100% { opacity: 1 } 50% { opacity: 0 } }
 

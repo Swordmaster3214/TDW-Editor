@@ -17,6 +17,7 @@ let seqWrapElement = null
 
 // Track the currently hovered sound element for hover-based editing
 let hoveredSoundWrap = null
+let hoveredControlWrap = null
 
 export function init(container) {
     seqWrapElement = container
@@ -62,6 +63,25 @@ function switchToActionsTab() {
             actionTabBtn.classList.add('active')
             const actionPanel = document.getElementById('actions-panel')
             if (actionPanel) actionPanel.style.display = 'flex'
+}
+
+// Helper to get track index and slot index from a hovered control wrap element
+function getIndicesFromControlElement(el) {
+    if (!el) return null
+
+        const controlWrap = el.closest('.seq-control-wrap')
+        if (!controlWrap) return null
+
+            const slot = controlWrap.closest('[data-index]')
+            if (!slot) return null
+
+                const lane = slot.closest('[data-track]')
+                if (!lane) return null
+
+                    const trackIndex = parseInt(lane.dataset.track, 10)
+                    const slotIndex = parseInt(slot.dataset.index, 10)
+
+                    return { trackIndex, slotIndex }
 }
 
 // Helper to get track index, slot index, and sound index from a hovered sound wrap element
@@ -281,15 +301,19 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
             return el
         }
 
+        // Wrap control content for editing
+        const wrap = document.createElement('span')
+        wrap.className = 'seq-control-wrap'
+
         const img = document.createElement('img')
         img.src = `https://thirtydollar.website/assets/action_${slot.name}.png`
         img.alt = slot.name
         img.className = 'seq-icon'
         img.onerror = () => {
             img.remove()
-            el.textContent = slot.toTDWToken()
+            wrap.textContent = slot.toTDWToken()
         }
-        el.appendChild(img)
+        wrap.appendChild(img)
 
         const token     = slot.toTDWToken()
         const valuePart = token.slice(slot.name.length + 1)
@@ -297,15 +321,66 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
             const badge = document.createElement('span')
             badge.className   = 'seq-main-val'
             badge.textContent = valuePart
-            el.appendChild(badge)
+            wrap.appendChild(badge)
         }
+
+        // Track hover state for editing
+        wrap.addEventListener('mouseenter', () => {
+            hoveredControlWrap = wrap
+        })
+        wrap.addEventListener('mouseleave', () => {
+            hoveredControlWrap = null
+        })
+
+        // Wheel event to adjust control values
+        wrap.addEventListener('wheel', e => {
+            e.preventDefault()
+            e.stopPropagation()
+
+            let editSlotIndex = index
+            if (hoveredControlWrap) {
+                const indices = getIndicesFromControlElement(hoveredControlWrap)
+                if (indices && indices.trackIndex === App.state.activeTrackIndex) {
+                    editSlotIndex = indices.slotIndex
+                }
+            }
+
+            const editSlot = App.activeTrack().slots[editSlotIndex]
+            if (!editSlot?.isControl || editSlot.value === null) return
+
+                let step = 1
+                if (e.shiftKey) step = 5
+                    if (e.altKey) step = 1
+
+                        const delta = e.deltaY < 0 ? step : -step
+
+                        // Adjust primary value for most controls
+                        if (e.ctrlKey || e.metaKey) {
+                            // With Ctrl, adjust value2 if it exists
+                            App.adjustControlValue2(editSlotIndex, delta)
+                        } else {
+                            // Default: adjust primary value
+                            App.adjustControlValue(editSlotIndex, delta)
+                        }
+        }, { passive: false })
+
+        el.appendChild(wrap)
         return el
     }
 
     if (slot.isRest) {
         el.className  = 'seq-slot seq-rest' + (isSelected ? ' selected' : '') + (wasPlayed ? ' played' : '')
         el.title      = `Rest (${slot.duration})`
-        el.textContent = '·'
+        const pauseInfo = App.state.soundList.find(x => x.id === '_pause')
+        if (pauseInfo?.imageLink) {
+            const img = document.createElement('img')
+            img.src = pauseInfo.imageLink
+            img.alt = 'rest'
+            img.className = 'seq-icon seq-rest-icon'
+            el.appendChild(img)
+        } else {
+            el.textContent = '·'
+        }
         return el
     }
 
@@ -441,9 +516,25 @@ function onKeyDown(e) {
             return
         }
 
-        // Ctrl + Left/Right Arrow Keys: Adjust Panning
+        // Ctrl + Left/Right Arrow Keys: Adjust Panning (or control value2 if hovering control)
         if (ctrl && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
             e.preventDefault()
+
+            // Check if hovering a control
+            if (hoveredControlWrap) {
+                const indices = getIndicesFromControlElement(hoveredControlWrap)
+                if (indices && indices.trackIndex === App.state.activeTrackIndex) {
+                    const editSlot = App.activeTrack().slots[indices.slotIndex]
+                    if (editSlot?.isControl && editSlot.value2 !== null) {
+                        // Adjust value2 for two-value controls
+                        const delta = e.key === 'ArrowRight' ? 1 : -1
+                        App.adjustControlValue2(indices.slotIndex, delta)
+                        return
+                    }
+                }
+            }
+
+            // Otherwise, adjust panning on sounds
             let step = 1
             if (e.shiftKey) step = 3
                 if (e.altKey) step = 1
@@ -495,6 +586,20 @@ function onKeyDown(e) {
             e.preventDefault()
             const delta   = e.key === 'ArrowUp' ? 1 : -1
 
+            // Check if hovering a control for primary value adjustment
+            if (hoveredControlWrap) {
+                const indices = getIndicesFromControlElement(hoveredControlWrap)
+                if (indices && indices.trackIndex === App.state.activeTrackIndex) {
+                    const editSlot = App.activeTrack().slots[indices.slotIndex]
+                    if (editSlot?.isControl && editSlot.value !== null) {
+                        // Adjust primary value
+                        App.adjustControlValue(indices.slotIndex, delta)
+                        return
+                    }
+                }
+            }
+
+            // Otherwise, adjust pitch on sounds
             let editSlotIndex = App.state.cursorPos - 1
             let editSoundIndex = 0
 
