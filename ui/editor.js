@@ -492,7 +492,7 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
             el.appendChild(wrap)
     })
 
-    if (slot.duration.denominator > 1 || slot.duration.numerator < 1) {
+    if (!slot.duration.equals(Fraction.QUARTER)) {
         const dur = document.createElement('sub')
         dur.className   = 'seq-dur'
         dur.textContent = slot.duration.toString()
