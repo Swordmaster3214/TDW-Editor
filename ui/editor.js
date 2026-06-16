@@ -4,6 +4,7 @@
 
 import * as App from '../app.js'
 import { resolveAudioId } from '../app.js'
+import { Fraction } from '../model/fraction.js'
 import { ACTION_BY_KEY } from '../model/controlslot.js'
 import { handleActionClick } from './actions.js'
 import { previewSound } from '../audio/engine.js'
