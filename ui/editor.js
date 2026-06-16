@@ -382,6 +382,15 @@ function makeSlotEl(slot, index, isSelected, wasPlayed) {
         } else {
             el.textContent = '·'
         }
+        
+        // Add duration sub element if not quarter note
+        if (!slot.duration.equals(Fraction.QUARTER)) {
+            const dur = document.createElement('sub')
+            dur.className   = 'seq-dur'
+            dur.textContent = slot.duration.toString()
+            el.appendChild(dur)
+        }
+        
         return el
     }
 
