@@ -36,6 +36,13 @@ export const ACTION_BY_KEY  = Object.fromEntries(ACTIONS.map(a => [a.shortcut, a
 
 export class ControlSlot {
     constructor({ name, value = null, modifier = null, value2 = null } = {}) {
+        // TDW won't take a loop count below 1 and quietly uses 1 instead, so we
+        // do the same here no matter how the slot got made (menu, import, .tde).
+        if (name === 'loopmany' && value !== null) {
+            const n = Math.round(+value)
+            value = Number.isFinite(n) ? Math.max(1, n) : 1
+        }
+
         this.name     = name      // TDW control name without !, e.g. 'speed'
         this.value    = value     // primary value, or null
         this.modifier = modifier  // null = set, '+' = add, 'x' = multiply, 'divide' = UI-only (exports as 'x' with 1/v)

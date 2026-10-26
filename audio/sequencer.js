@@ -29,19 +29,14 @@ function applyModifier(current, newVal, modifier) {
     }
 }
 
-// Clears loop-related state within the range (dst, src) exclusive --
-// called when looping backward so the body replays correctly.
-function clearRangeExclusive(dst, src, slots, triggered, remaining) {
+// A backward loop jump re-arms any !jump inside the loop body so it can
+// fire again on the next pass. It never touches loop counters: once a loop
+// has run out of repeats it stays spent for the rest of playback, like TDW.
+function rearmJumpsInRange(dst, src, slots, triggered) {
     for (const k of triggered) {
-        if (k > dst && k < src) {
-            const s = slots[k]
-            if (s?.isControl && (s.name === 'jump' || s.name === 'loop' || s.name === 'loopmany')) {
-                triggered.delete(k)
-            }
+        if (k > dst && k < src && slots[k]?.isControl && slots[k].name === 'jump') {
+            triggered.delete(k)
         }
-    }
-    for (const k of remaining.keys()) {
-        if (k > dst && k < src) remaining.delete(k)
     }
 }
 
@@ -105,11 +100,10 @@ function buildTrackSchedule(project, track, trackIndex) {
                     const left = remaining.has(index) ? remaining.get(index) : val
                     if (left > 0) {
                         remaining.set(index, left - 1)
-                        clearRangeExclusive(loopTarget, index, slots, triggered, remaining)
+                        rearmJumpsInRange(loopTarget, index, slots, triggered)
                         index = loopTarget - 1
-                    } else {
-                        remaining.delete(index)
                     }
+                    // Spent: the stored 0 keeps it spent on later visits
                     break
                 }
 
@@ -117,11 +111,10 @@ function buildTrackSchedule(project, track, trackIndex) {
                     const left = remaining.has(index) ? remaining.get(index) : 1
                     if (left > 0) {
                         remaining.set(index, left - 1)
-                        clearRangeExclusive(loopTarget, index, slots, triggered, remaining)
+                        rearmJumpsInRange(loopTarget, index, slots, triggered)
                         index = loopTarget - 1
-                    } else {
-                        remaining.delete(index)
                     }
+                    // Spent: the stored 0 keeps it spent on later visits
                     break
                 }
 
@@ -136,9 +129,6 @@ function buildTrackSchedule(project, track, trackIndex) {
                         s.isControl && s.name === 'target' && s.value == val
                         )
                         if (targetIdx >= 0) {
-                            for (const k of remaining.keys()) {
-                                if (k > targetIdx) remaining.delete(k)
-                            }
                             index = targetIdx
                         }
                     }

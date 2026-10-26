@@ -67,7 +67,7 @@
   </div>
 
   <div id="editor-area">
-    <div id="ruler">Click a sound to insert · Space = rest · Backspace = delete · Shift+arrows = select · Ctrl+C/V = copy/paste · Scroll = pitch · ↑↓ = pitch · Right-click = preview</div>
+    <div id="ruler">Click a sound to insert · Space = rest · Backspace = delete · Drag boxes to move (Ctrl = copy) · Drag empty space to select · Shift/Ctrl+click = select · Ctrl+A = all · Ctrl+C/V = copy/paste · Scroll = pitch · ↑↓ = pitch · Right-click = preview</div>
 
     <div id="seq-wrap" tabindex="0"></div>
   </div>
@@ -89,6 +89,7 @@
   import * as Editor  from './ui/editor.js'
   import * as Picker  from './ui/soundpicker.js'
   import * as Actions from './ui/actions.js'
+  import * as Pointer from './ui/pointer.js'
   import * as Seq     from './audio/sequencer.js'
   import { Fraction } from './model/fraction.js'
 
@@ -113,6 +114,7 @@
   Editor.init(domCache.seqWrap)
   Picker.init(document.getElementById('picker'))
   Actions.init(document.getElementById('actions-panel'))
+  Pointer.init(domCache.seqWrap)
 
   document.getElementById('sidebar-tabs').addEventListener('click', e => {
     const btn = e.target.closest('.tab-btn')
@@ -227,8 +229,11 @@
 
     if (selection) {
       domCache.sbSelection.style.display = ''
-      domCache.sbSelRange.textContent =
-        `${selection.start}–${selection.end} (${selection.end - selection.start + 1} slots)`
+      const picked = selection.indices.size
+      const solid  = selection.end - selection.start + 1 === picked
+      domCache.sbSelRange.textContent = solid
+        ? `${selection.start}–${selection.end} (${picked} slots)`
+        : `${picked} slots (${selection.start}–${selection.end}, with gaps)`
     } else {
       domCache.sbSelection.style.display = 'none'
     }

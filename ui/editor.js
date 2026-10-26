@@ -223,23 +223,10 @@ function buildLane(track, trackIndex, isActive, cursorPos, selection) {
         if (isActive && cursorPos === 0) seqEl.appendChild(makeCursorEl())
 
             slots.forEach((slot, i) => {
-                const isSelected = isActive && selection && i >= selection.start && i <= selection.end
+                const isSelected = isActive && selection && selection.indices.has(i)
                 const wasPlayed  = played.has(i)
                 const el         = makeSlotEl(slot, i, isSelected, wasPlayed)
                 el.dataset.index = i
-
-                el.addEventListener('click', e => {
-                    e.stopPropagation()
-                    if (trackIndex !== App.state.activeTrackIndex) {
-                        App.setActiveTrack(trackIndex)
-                    }
-                    if (e.shiftKey) {
-                        App.extendSelection(i - (App.state.cursorPos - 1))
-                    } else {
-                        App.setCursor(i + 1)
-                    }
-                    seqWrapElement.focus()
-                })
 
                 el.addEventListener('contextmenu', e => {
                     e.preventDefault()
@@ -260,15 +247,7 @@ function buildLane(track, trackIndex, isActive, cursorPos, selection) {
             })
     }
 
-    // Clicking empty space in the active lane moves cursor to end
-    seqEl.addEventListener('click', () => {
-        if (trackIndex !== App.state.activeTrackIndex) {
-            App.setActiveTrack(trackIndex)
-        } else {
-            App.setCursor(App.activeTrack().slots.length)
-        }
-        seqWrapElement.focus()
-    })
+    // Clicks, drags and marquee selection are handled in ui/pointer.js
 
     lane.appendChild(seqEl)
     return lane
@@ -585,6 +564,7 @@ function onKeyDown(e) {
         if (e.key === 'Backspace') { e.preventDefault(); App.deleteBeforeCursor(); return }
         if (e.key === 'Delete')    { e.preventDefault(); App.deleteAfterCursor();  return }
         if (e.key === ' ')         { e.preventDefault(); App.insertRest();          return }
+        if (ctrl && e.key.toLowerCase() === 'a') { e.preventDefault(); App.selectAll(); return }
 
         if (ctrl && e.key === 'z' && !e.shiftKey) { e.preventDefault(); App.undo(); return }
         if (ctrl && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); App.redo(); return }

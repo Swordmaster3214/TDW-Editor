@@ -543,3 +543,74 @@ position: relative;
 #sbPlaying { color: var(--success); display: none; }
 #sbPlaying.active { display: inline; }
 #sbPlaying::before { content: '● '; }
+
+/* -- Dragging and selecting -- */
+.seq-slot { cursor: grab; }
+.seq-icon, .seq-slot img { -webkit-user-drag: none; user-select: none; }
+
+#seq-wrap.is-dragging,
+#seq-wrap.is-dragging * { cursor: grabbing !important; }
+#seq-wrap.is-selecting,
+#seq-wrap.is-selecting * { cursor: text !important; user-select: none; }
+#seq-wrap.is-dragging .seq-cursor,
+#seq-wrap.is-dragging .seq-hint { display: none; }
+
+/* The originals vanish while a move is in flight, a copy leaves them dimmed */
+.seq-slot.drag-source { display: none; }
+.seq-slot.drag-source-copy { opacity: 0.45; }
+
+/* The gap that shows where the drop will land */
+.drop-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 4.23rem;
+    height: 4.23rem;
+    flex-shrink: 0;
+    box-sizing: border-box;
+    border: 2px dashed var(--accent);
+    border-radius: 8px;
+    background: rgba(91, 143, 255, 0.10);
+}
+.drop-placeholder-count {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--accent);
+}
+
+/* Floating copy of the boxes under the pointer */
+.drag-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    pointer-events: none;
+    will-change: transform;
+}
+.drag-ghost-box {
+    position: absolute;
+    top: calc(var(--n, 0) * 6px);
+    left: calc(var(--n, 0) * 6px);
+    margin: 0;
+    opacity: 0.92;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+    box-sizing: border-box;
+}
+.drag-ghost-count {
+    position: absolute;
+    top: -0.5rem;
+    right: -0.5rem;
+    z-index: 5;
+    min-width: 1.4rem;
+    height: 1.4rem;
+    padding: 0 0.3rem;
+    border-radius: 0.7rem;
+    background: var(--accent);
+    color: #fff;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.4rem;
+    text-align: center;
+}

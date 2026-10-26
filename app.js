@@ -12,7 +12,8 @@ export const state = {
     project:          new Project(),
     activeTrackIndex: 0,
     cursorPos:        0,       // insert point within the active track; 0 = before first slot
-    selection:        null,    // { start, end } inclusive slot indices, or null
+    selection:        null,    // { indices:Set, anchorGap, focusGap, start, end } or null
+    anchorSlot:       null,    // slot last plain-clicked (valid while the cursor sits right after it)
     activeDur:        Fraction.QUARTER,
     soundList:        [],
     undoStack:        [],      // array of serialized tracks snapshots
@@ -22,8 +23,8 @@ export const state = {
 // Sound ID lookup cache: Map<tdwId, sound> for O(1) lookups instead of O(n)
 let soundIdCache = null
 
-// Undo/redo debounce: only snapshot once per 200ms to group rapid edits
-let undoDebounceTimer = null
+// Edits closer together than this share one undo step
+let lastSnapshotAt = -Infinity
 const UNDO_DEBOUNCE_MS = 200
 
 // -- Active track helper --
@@ -39,19 +40,24 @@ function notify() {
     document.dispatchEvent(new CustomEvent('statechange'))
 }
 
-// -- Undo/redo (debounced) --
+// -- Undo/redo --
 
-function snapshot() {
-    // Clear any pending debounce timer
-    if (undoDebounceTimer) clearTimeout(undoDebounceTimer)
+function serializeTracks() {
+    return JSON.stringify(state.project.tracks.map(t => t.toJSON()))
+}
 
-        // Debounce: only create snapshot after user stops editing for 200ms
-        undoDebounceTimer = setTimeout(() => {
-            state.undoStack.push(JSON.stringify(state.project.tracks.map(t => t.toJSON())))
-            state.redoStack = []
-            if (state.undoStack.length > 100) state.undoStack.shift()
-                undoDebounceTimer = null
-        }, UNDO_DEBOUNCE_MS)
+// Saves the state from before an edit. A quick burst of edits (like
+// scrolling a pitch up several steps) only saves once, at the start of the
+// burst, so a single Ctrl+Z undoes the whole burst. Pass force for edits
+// that should always be their own undo step, like dropping dragged slots.
+function snapshot({ force = false } = {}) {
+    const now   = performance.now()
+    const quiet = now - lastSnapshotAt > UNDO_DEBOUNCE_MS
+    lastSnapshotAt = now
+    if (!force && !quiet) return
+    state.undoStack.push(serializeTracks())
+    state.redoStack = []
+    if (state.undoStack.length > 100) state.undoStack.shift()
 }
 
 function restoreTracks(raw) {
@@ -60,30 +66,23 @@ function restoreTracks(raw) {
     const len = activeTrack().slots.length
     state.cursorPos = Math.min(state.cursorPos, len)
     state.selection = null
+    state.anchorSlot = null
 }
 
 export function undo() {
     if (!state.undoStack.length) return
-        // Immediately flush any pending snapshot
-        if (undoDebounceTimer) {
-            clearTimeout(undoDebounceTimer)
-            undoDebounceTimer = null
-        }
-        state.redoStack.push(JSON.stringify(state.project.tracks.map(t => t.toJSON())))
-        restoreTracks(JSON.parse(state.undoStack.pop()))
-        notify()
+    state.redoStack.push(serializeTracks())
+    restoreTracks(JSON.parse(state.undoStack.pop()))
+    lastSnapshotAt = -Infinity
+    notify()
 }
 
 export function redo() {
     if (!state.redoStack.length) return
-        // Immediately flush any pending snapshot
-        if (undoDebounceTimer) {
-            clearTimeout(undoDebounceTimer)
-            undoDebounceTimer = null
-        }
-        state.undoStack.push(JSON.stringify(state.project.tracks.map(t => t.toJSON())))
-        restoreTracks(JSON.parse(state.redoStack.pop()))
-        notify()
+    state.undoStack.push(serializeTracks())
+    restoreTracks(JSON.parse(state.redoStack.pop()))
+    lastSnapshotAt = -Infinity
+    notify()
 }
 
 // -- Cursor --
@@ -91,6 +90,7 @@ export function redo() {
 export function setCursor(pos) {
     state.cursorPos = Math.max(0, Math.min(pos, activeTrack().slots.length))
     state.selection = null
+    state.anchorSlot = null
     notify()
 }
 
@@ -98,41 +98,118 @@ export function moveCursor(delta) {
     setCursor(state.cursorPos + delta)
 }
 
+// Plain click on a slot: cursor goes after it and it becomes the anchor
+// for a later shift+click.
+export function clickSlot(i) {
+    state.cursorPos  = Math.max(0, Math.min(i + 1, activeTrack().slots.length))
+    state.selection  = null
+    state.anchorSlot = i
+    notify()
+}
+
 // -- Selection --
+//
+// A selection is a set of slot indices on the active track. Shift-click,
+// shift-arrows and the marquee always make a contiguous run, while
+// ctrl-click can leave holes. anchorGap and focusGap are cursor positions
+// (the spots between slots) and drive shift+arrow growth. start and end are
+// just the lowest and highest selected index.
+
+function makeSelection(indices, anchorGap, focusGap, anchorSlot = null) {
+    if (!indices.size) return null
+    let start = Infinity, end = -Infinity
+    for (const i of indices) { if (i < start) start = i; if (i > end) end = i }
+    return { indices, anchorGap, focusGap, anchorSlot: anchorSlot ?? start, start, end }
+}
+
+// The slot a plain click last landed after, as long as the cursor has not
+// moved since. It acts as the starting point for shift+click and ctrl+click.
+function clickedSlot() {
+    const a = state.anchorSlot
+    return a !== null && state.cursorPos === a + 1 ? a : null
+}
+
+function clampGap(g) {
+    return Math.max(0, Math.min(g, activeTrack().slots.length))
+}
+
+export function selectedIndices() {
+    return state.selection ? [...state.selection.indices].sort((a, b) => a - b) : []
+}
+
+export function isSlotSelected(i) {
+    return !!state.selection?.indices.has(i)
+}
 
 export function setSelection(start, end) {
-    if (start === null) { state.selection = null }
-    else {
-        state.selection = {
-            start: Math.max(0, Math.min(start, end)),
-            end:   Math.min(activeTrack().slots.length - 1, Math.max(start, end)),
-        }
+    if (start === null) {
+        state.selection = null
+    } else {
+        const lo = Math.max(0, Math.min(start, end))
+        const hi = Math.min(activeTrack().slots.length - 1, Math.max(start, end))
+        const indices = new Set()
+        for (let i = lo; i <= hi; i++) indices.add(i)
+        state.selection = makeSelection(indices, lo, hi + 1)
     }
     notify()
 }
 
 export function extendSelection(delta) {
-    const anchor = state.selection?.anchor ?? state.cursorPos
-    const focus  = Math.max(0, Math.min(
-        (state.selection?.focus ?? state.cursorPos) + delta,
-                                        activeTrack().slots.length
-    ))
+    const anchor = state.selection?.anchorGap ?? state.cursorPos
+    const focus  = clampGap((state.selection?.focusGap ?? state.cursorPos) + delta)
+    selectGapRange(anchor, focus)
+}
 
-    if (anchor === focus) {
-        // Collapsed back to a cursor -- no selection
-        state.selection = null
-    } else {
-        const lo = Math.min(anchor, focus)
-        const hi = Math.max(anchor, focus)
-        state.selection = {
-            anchor,
-            focus,
-            start: lo,      // first selected slot index
-            end:   hi - 1,  // last selected slot index (cursor pos hi is *after* slot hi-1)
-        }
-    }
-    state.cursorPos = focus
+// Select every slot between two gaps, like dragging a text selection.
+// Pass base (a Set) to keep existing picks, which is what a ctrl+marquee does.
+export function selectGapRange(anchorGap, focusGap, base = null) {
+    const a = clampGap(anchorGap)
+    const f = clampGap(focusGap)
+    const indices = new Set(base ?? [])
+    for (let i = Math.min(a, f); i < Math.max(a, f); i++) indices.add(i)
+    // The slot next to where the drag began, on the side the drag went
+    const anchorSlot = f >= a ? a : a - 1
+    state.selection = makeSelection(indices, a, f, Math.max(0, anchorSlot))
+    state.cursorPos = f
     notify()
+}
+
+// Shift+click: everything from the anchor slot through the clicked one.
+// With additive (shift+ctrl) the range joins what is already selected.
+export function selectSlotRange(i, { additive = false } = {}) {
+    const len = activeTrack().slots.length
+    if (!len) return
+    const from = state.selection?.anchorSlot ?? clickedSlot() ?? state.cursorPos - 1
+    const a = Math.max(0, Math.min(from, len - 1))
+    const base = additive && state.selection ? state.selection.indices : null
+    const indices = new Set(base ?? [])
+    for (let k = Math.min(a, i); k <= Math.max(a, i); k++) indices.add(k)
+    const anchorGap = i >= a ? a : a + 1
+    const focusGap  = i >= a ? i + 1 : i
+    state.selection  = makeSelection(indices, anchorGap, focusGap, a)
+    state.anchorSlot = null
+    state.cursorPos  = focusGap
+    notify()
+}
+
+// Ctrl+click: add or remove just this slot.
+export function toggleSlot(i) {
+    const indices = new Set(state.selection?.indices ?? [])
+    // First ctrl+click after a plain click: the clicked slot counts as picked
+    const clicked = state.selection ? null : clickedSlot()
+    if (clicked !== null && clicked !== i) indices.add(clicked)
+    if (indices.has(i)) indices.delete(i)
+    else indices.add(i)
+    state.selection  = makeSelection(indices, i, i + 1, i)
+    state.anchorSlot = null
+    state.cursorPos  = i + 1
+    notify()
+}
+
+export function selectAll() {
+    const len = activeTrack().slots.length
+    if (!len) return
+    selectGapRange(0, len)
 }
 
 // -- Insert / delete --
@@ -141,8 +218,11 @@ export function insertSlot(slot) {
     snapshot()
     const slots = activeTrack().slots
     if (state.selection) {
-        slots.splice(state.selection.start, state.selection.end - state.selection.start + 1, slot)
-        state.cursorPos = state.selection.start + 1
+        // Replace the whole selection with the new slot, even if it has holes
+        const picked = selectedIndices()
+        for (let k = picked.length - 1; k >= 0; k--) slots.splice(picked[k], 1)
+        slots.splice(picked[0], 0, slot)
+        state.cursorPos = picked[0] + 1
         state.selection = null
     } else {
         slots.splice(state.cursorPos, 0, slot)
@@ -192,14 +272,13 @@ export function deleteAfterCursor() {
 
 function deleteSelection() {
     if (!state.selection) return
-        snapshot()
-        activeTrack().slots.splice(
-            state.selection.start,
-            state.selection.end - state.selection.start + 1
-        )
-        state.cursorPos = state.selection.start
-        state.selection = null
-        notify()
+    snapshot()
+    const slots  = activeTrack().slots
+    const picked = selectedIndices()
+    for (let k = picked.length - 1; k >= 0; k--) slots.splice(picked[k], 1)
+    state.cursorPos = picked[0]
+    state.selection = null
+    notify()
 }
 
 // -- Copy / paste --
@@ -208,9 +287,8 @@ let clipboard = []
 
 export function copySelection() {
     if (!state.selection) return
-        clipboard = activeTrack().slots
-        .slice(state.selection.start, state.selection.end + 1)
-        .map(s => s.clone())
+    const slots = activeTrack().slots
+    clipboard = selectedIndices().map(i => slots[i].clone())
 }
 
 export function pasteAtCursor() {
@@ -220,7 +298,49 @@ export function pasteAtCursor() {
         activeTrack().slots.splice(state.cursorPos, 0, ...clones)
         state.cursorPos += clones.length
         state.selection  = null
+        state.anchorSlot = null
         notify()
+}
+
+// -- Moving slots between positions and lanes --
+
+// Move (or copy) slots from one track to a spot in another, or the same,
+// track. gap is where the group lands, counted in the destination list
+// after the moved slots have been taken out (when moving inside one track).
+// The moved slots end up selected in the destination so the drag can be
+// undone with another drag or a Ctrl+Z.
+export function moveSlots(fromTrack, indices, toTrack, gap, { copy = false } = {}) {
+    const tracks = state.project.tracks
+    const src = tracks[fromTrack]?.slots
+    const dst = tracks[toTrack]?.slots
+    if (!src || !dst || !indices.length) return
+
+    const picked = [...new Set(indices)].sort((a, b) => a - b)
+    const sameLane = fromTrack === toTrack
+    const contiguous = picked[picked.length - 1] - picked[0] === picked.length - 1
+
+    // Dropping a plain move right back where it started changes nothing
+    const noChange = sameLane && !copy && contiguous && gap === picked[0]
+    if (!noChange) snapshot({ force: true })
+
+    let moved = picked.map(i => copy ? src[i].clone() : src[i])
+    if (!copy && !noChange) {
+        for (let k = picked.length - 1; k >= 0; k--) src.splice(picked[k], 1)
+    }
+    let at = Math.max(0, Math.min(gap, dst.length))
+    if (noChange) {
+        at = picked[0]
+    } else {
+        dst.splice(at, 0, ...moved)
+    }
+
+    state.activeTrackIndex = toTrack
+    const landed = new Set()
+    for (let k = 0; k < moved.length; k++) landed.add(at + k)
+    state.selection  = makeSelection(landed, at, at + moved.length, at)
+    state.cursorPos  = at + moved.length
+    state.anchorSlot = null
+    notify()
 }
 
 // -- Pitch editing --
